@@ -1,0 +1,50 @@
+id: prototrader-finance
+name: protoTrader Finance
+version: 0.1.0
+description: >-
+  The full-bundle finance plugin — every protoAgent contribution type in one
+  installable repo. 13 market/quant **tools** (market data, vectorized backtest,
+  factor IC, behavioral journal, gated paper broker), the 3-subagent research
+  **desk** (market-analyst, quant, risk-manager), the quant-desk /
+  investment-committee **workflows**, finance **skills**, a Quant Desk dashboard
+  **console view** (ADR 0026), and **config / secrets / settings** (ADR 0019).
+  Research-primary; the paper broker is OFF until a mandate exists and every order
+  is HITL-gated + kill-switchable — distribution never relaxes that.
+
+# Author default: OFF. Operators opt in (plugins.enabled) after reviewing — this
+# plugin adds a file-writing paper broker (gated) and reaches market-data hosts.
+enabled: false
+
+# Deps are declared, NOT auto-installed (ADR 0027 D4) — `plugin install-deps
+# prototrader-finance`, or `pip install -r requirements-finance.txt` in the fork.
+requires_pip:
+  - yfinance>=0.2.40
+  - ccxt>=4.3
+  - pandas>=2
+  - numpy>=1.26
+
+repository: https://github.com/protoLabsAI/prototrader-finance
+min_protoagent_version: "0.21.0"
+
+# Declarative (surfaced for review, not enforced): reaches market-data hosts;
+# the paper broker writes its ledger/mandate under the config dir.
+capabilities:
+  network: ["query1.finance.yahoo.com", "query2.finance.yahoo.com", "*"]
+  filesystem: scoped
+
+# Config + secrets + Settings (ADR 0019) — claims a top-level `prototrader_finance`
+# section; renders a Settings → Integrations group.
+config_section: prototrader_finance
+config:
+  default_benchmark: "SPY"
+  broker_mandate_path: ""
+secrets: [market_data_api_key]
+settings:
+  - { key: default_benchmark, label: "Default benchmark", type: string, description: "Buy-and-hold benchmark for the dashboard + backtests (e.g. SPY, QQQ)." }
+  - { key: market_data_api_key, label: "Market-data API key (optional)", type: secret, description: "Optional premium data-provider key; blank uses the keyless yfinance/ccxt path." }
+  - { key: broker_mandate_path, label: "Broker mandate path", type: string, description: "Paper-broker mandate file (blank = config/broker_mandate.yaml). The broker stays OFF until this exists." }
+
+# Console view (ADR 0026) — a left-rail icon opening the Quant Desk dashboard
+# (iframe of a page this plugin serves at /plugins/prototrader-finance/dashboard).
+views:
+  - { id: dashboard, label: "Quant Desk", icon: LineChart, path: /plugins/prototrader-finance/dashboard }

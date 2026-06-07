@@ -1,0 +1,23 @@
+# protoTrader paper-broker mandate — copy to broker_mandate.yaml to ARM.
+#
+# The broker is OFF until this file exists with `enabled: true`. Even then it is
+# PAPER ONLY (`mode: live` is refused). Every order is checked against these
+# limits AND requires the operator to type APPROVE before it fills. To halt
+# instantly at any time, `touch config/TRADING_HALT` (the kill-switch).
+
+enabled: false          # master switch — nothing trades until this is true
+mode: paper             # paper | live  (live is intentionally not implemented)
+
+starting_cash: 100000   # opening paper cash (first run only; state persists after)
+
+# Symbol allowlist. Empty = any symbol (still bounded by the limits below).
+# Equities/ETFs as plain tickers; crypto in ccxt form (e.g. BTC/USDT).
+universe: []
+# universe: [SPY, QQQ, AAPL, MSFT, BTC/USDT, ETH/USDT]
+
+max_order_usd: 5000          # max notional per single order
+max_position_pct: 20         # max % of equity in any one symbol
+max_gross_exposure_pct: 100  # max total invested as % of equity (100 = no leverage)
+daily_order_cap: 10          # max orders per calendar day
+
+require_approval: true       # per-order human approval (keep true; live would force it)

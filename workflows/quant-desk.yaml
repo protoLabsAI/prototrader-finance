@@ -1,0 +1,61 @@
+# protoTrader workflow preset — the quant desk (Slice 3).
+# Setup → empirical backtest → risk/robustness review → go-no-go audit, over the
+# desk subagents. Replaces Vibe-Trading's "quant desk" swarm. Run it with:
+#   run_workflow("quant-desk", {"idea": "20/50 MA cross on SPY"})
+name: quant-desk
+description: >-
+  Take a trading idea from setup → backtest → risk review → a go / no-go / refine
+  call, with the numbers. Research, not advice.
+version: 1
+inputs:
+  - name: idea
+    description: The idea to vet, incl. the instrument (e.g. "RSI mean-reversion on AAPL", "breakout on BTC/USDT").
+    required: true
+steps:
+  - id: setup
+    subagent: market-analyst
+    prompt: |
+      Establish the current setup + context for the instrument in this idea:
+      {{inputs.idea}}.
+      Price, trend, where it sits in its range, and (equities) valuation. Keep it
+      tight — this frames the backtest, it isn't the deliverable.
+  - id: test
+    subagent: quant
+    prompt: |
+      Empirically test this trading idea: {{inputs.idea}}.
+      You MUST run the backtest by CALLING the `backtest_strategy` tool — do not
+      write or describe backtest code; code is not a result. Pick the matching
+      strategy + sensible parameters (use `list_strategies` if unsure), call the
+      tool with realistic costs, then read the ACTUAL numbers honestly — vs
+      buy-and-hold, in vs out-of-sample, and the bootstrap Sharpe CI. If the idea
+      is vague, choose reasonable defaults and state them. Check robustness if the
+      result looks promising. If you did not call the tool, return
+      "inconclusive: backtest not run" — never fabricate metrics.
+  - id: risk
+    subagent: risk-manager
+    depends_on: [test]
+    prompt: |
+      Review this backtested idea ({{inputs.idea}}) for risk and robustness.
+      Backtest result:
+      {{steps.test.output}}
+
+      Flag: drawdown / tail, regime dependence, trade-count significance, and a
+      prudent max size / stop if it were traded. Is the edge robust or fragile?
+  - id: audit
+    subagent: quant
+    depends_on: [setup, test, risk]
+    prompt: |
+      Final desk call on the idea: {{inputs.idea}}. Lead with **GO / NO-GO /
+      REFINE** and one sentence why, in the numbers. Then the key evidence (did it
+      beat buy-and-hold? OOS hold up? CI above 0? enough trades?), the main risk,
+      and — if REFINE — the specific change to test next. This is analysis, not advice.
+
+      SETUP:
+      {{steps.setup.output}}
+
+      BACKTEST:
+      {{steps.test.output}}
+
+      RISK:
+      {{steps.risk.output}}
+output: "{{steps.audit.output}}"

@@ -1,0 +1,63 @@
+# protoTrader workflow preset — the investment committee (Slice 3).
+# A bull/bear debate → risk review → PM synthesis over the desk subagents.
+# Replaces Vibe-Trading's "investment committee" swarm with protoAgent's
+# declarative workflows (ADR 0002). Run it with:
+#   run_workflow("investment-committee", {"subject": "NVDA"})
+name: investment-committee
+description: >-
+  Debate an instrument or thesis from both sides, stress-test it, and return a
+  committee view with a sizing/levels read. Research, not advice.
+version: 1
+inputs:
+  - name: subject
+    description: The instrument or thesis to evaluate (e.g. "NVDA", "long SPY into year-end").
+    required: true
+steps:
+  - id: bull
+    subagent: market-analyst
+    prompt: |
+      Argue the **BULL case** for: {{inputs.subject}}.
+      Pull the current price/trend and fundamentals/catalysts with your tools.
+      3-4 of the strongest, data-grounded bullish points, each cited. Be persuasive
+      but factual — no hype, no made-up numbers.
+  - id: bear
+    subagent: market-analyst
+    prompt: |
+      Argue the **BEAR case** for: {{inputs.subject}}.
+      Pull the current price/trend and valuation/risks with your tools.
+      3-4 of the strongest, data-grounded bearish points, each cited. Be persuasive
+      but factual.
+  - id: risk
+    subagent: risk-manager
+    depends_on: [bull, bear]
+    prompt: |
+      The committee is weighing: {{inputs.subject}}. Here are the two sides.
+
+      BULL:
+      {{steps.bull.output}}
+
+      BEAR:
+      {{steps.bear.output}}
+
+      Stress-test it: the top risks (ranked), a concrete downside scenario with a
+      number, key levels, a suggested max size / stop consistent with prudent risk,
+      and the one thing you'd watch that flips the call.
+  - id: view
+    subagent: market-analyst
+    depends_on: [bull, bear, risk]
+    prompt: |
+      You are the PM. Synthesize the committee's work on {{inputs.subject}} into a
+      final view. Lead with a one-line **stance** (constructive / neutral /
+      cautious — NOT buy/sell), then: which side of the debate is stronger and why,
+      the key levels, the suggested sizing/stop from risk, and what would change
+      the view. End by reminding this is analysis, not personalized advice.
+
+      BULL:
+      {{steps.bull.output}}
+
+      BEAR:
+      {{steps.bear.output}}
+
+      RISK:
+      {{steps.risk.output}}
+output: "{{steps.view.output}}"
