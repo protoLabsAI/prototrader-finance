@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# Paper-broker local state (written at runtime into the host config dir; never here)
+broker_paper.json
+broker_audit.jsonl
+broker_mandate.yaml
+.DS_Store

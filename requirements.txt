@@ -1,0 +1,7 @@
+# Runtime deps for the protoTrader Finance plugin (declared in the manifest as
+# requires_pip). The host protoAgent already provides pandas/numpy via its core;
+# yfinance + ccxt are the finance-specific additions.
+yfinance>=0.2.40
+ccxt>=4.3
+pandas>=2
+numpy>=1.26
