@@ -16,6 +16,17 @@ money).
 > `plugin-devkit` pattern): tools, subagents, workflows, skills, a console view,
 > and config/secrets/settings.
 
+## See it running — a working finance agent
+
+Want a complete, working example of an agent built around this plugin?
+**[protoTrader](https://github.com/protoLabsAI/protoTrader)** is a natural-language
+trading research agent that installs this plugin as its finance layer — it's the
+reference host. It consumes this repo exactly the way you would (`plugin install`
++ a pinned `plugins.lock`), enables it, and ships the surrounding agent (the A2A
+server, the React console the Quant Desk view renders in, persona, evals, the
+release pipeline). Read it to see how a finance agent is wired end to end, or fork
+it as a starting point.
+
 ## What it contributes
 
 | Surface | What |
