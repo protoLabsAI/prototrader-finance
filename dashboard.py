@@ -77,72 +77,60 @@ def build_dashboard_router(config: dict | None):
 _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quant Desk</title>
+<link rel="stylesheet" href="/_ds/plugin-kit.css">
 <style>
-  :root{
-    --bg:#0a0a0c; --raised:#141418; --border:#26262d; --fg:#ededed;
-    --fg-muted:#8b8b95; --accent:#a78bfa; --up:#46c46a; --down:#e0533a;
-  }
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
-    font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;font-size:14px}
-  .wrap{max-width:880px;margin:0 auto;padding:24px 28px}
-  h1{font-size:18px;margin:0 0 2px;color:var(--accent);letter-spacing:.2px}
-  .sub{color:var(--fg-muted);font-size:12.5px;margin:0 0 18px}
-  form{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px}
-  label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.05em}
-  input,select{background:var(--raised);border:1px solid var(--border);color:var(--fg);
-    border-radius:8px;padding:8px 10px;font-size:13px;min-width:120px}
-  button{background:var(--accent);color:#0a0a0c;border:0;border-radius:8px;padding:9px 16px;
-    font-size:13px;font-weight:600;cursor:pointer;height:36px}
-  button:disabled{opacity:.5;cursor:default}
-  .chart{background:var(--raised);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:16px}
+  html,body{margin:0;height:100%;background:var(--pl-color-bg);color:var(--pl-color-fg);
+    font-family:var(--pl-font-sans);font-size:14px}
+  .wrap{max-width:880px;margin:0 auto;padding:var(--pl-space-6) var(--pl-space-8)}
+  h1{font-size:18px;margin:0 0 2px;color:var(--pl-color-accent);letter-spacing:.2px}
+  .sub{color:var(--pl-color-fg-muted);font-size:12.5px;margin:0 0 18px}
+  form{display:flex;gap:var(--pl-space-3);flex-wrap:wrap;align-items:flex-end;margin-bottom:18px}
+  label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--pl-color-fg-muted);text-transform:uppercase;letter-spacing:.05em}
+  form .pl-input,form .pl-select{min-width:120px}
+  .chart{background:var(--pl-color-bg-raised);border:var(--pl-border-width) solid var(--pl-color-border);border-radius:var(--pl-radius);margin-bottom:16px}
+  .chart__body{padding:var(--pl-space-3)}
   .legend{display:flex;gap:18px;font-size:12px;margin:0 0 8px 4px}
   .legend i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
   svg{width:100%;height:260px;display:block}
-  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
-  .metric{background:var(--raised);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
-  .metric .k{font-size:10.5px;color:var(--fg-muted);text-transform:uppercase;letter-spacing:.05em}
-  .metric .v{font-size:18px;font-weight:600;margin-top:3px}
-  .v.pos{color:var(--up)} .v.neg{color:var(--down)}
-  .note{color:var(--fg-muted);font-size:11.5px;margin-top:14px;line-height:1.5}
-  .err{background:rgba(224,83,58,.12);border:1px solid rgba(224,83,58,.4);color:#f0a090;
-    border-radius:10px;padding:12px 14px;font-size:13px;margin-bottom:16px}
+  #metrics .pl-stat__num.pos{color:var(--pl-color-status-success)}
+  #metrics .pl-stat__num.neg{color:var(--pl-color-status-error)}
+  .note{color:var(--pl-color-fg-muted);font-size:11.5px;margin-top:14px;line-height:1.5}
 </style></head><body><div class="wrap">
   <h1>Quant Desk</h1>
   <p class="sub">Vectorized backtest with realistic costs vs buy-and-hold — research, not advice.</p>
   <form id="f">
-    <label>Symbol<input id="symbol" value="__DEFAULT_SYMBOL__" autocomplete="off"></label>
-    <label>Strategy<select id="strategy"></select></label>
-    <label>Period<select id="period">
+    <label>Symbol<input id="symbol" class="pl-input" value="__DEFAULT_SYMBOL__" autocomplete="off"></label>
+    <label>Strategy<select id="strategy" class="pl-select"></select></label>
+    <label>Period<select id="period" class="pl-select">
       <option>1y</option><option selected>2y</option><option>5y</option></select></label>
-    <button id="run" type="submit">Backtest</button>
+    <button id="run" type="submit" class="pl-btn pl-btn--primary">Backtest</button>
   </form>
-  <div id="err" class="err" hidden></div>
+  <div id="err" class="pl-callout pl-callout--error" hidden></div>
   <div class="chart">
-    <div class="legend"><span><i style="background:#a78bfa"></i>Strategy</span>
-      <span><i style="background:#8b8b95"></i>Buy &amp; hold</span>
-      <span id="range" style="color:var(--fg-muted)"></span></div>
-    <svg id="svg" viewBox="0 0 800 260" preserveAspectRatio="none"></svg>
+    <div class="pl-panel-header">
+      <div class="legend"><span><i style="background:var(--pl-color-accent)"></i>Strategy</span>
+        <span><i style="background:var(--pl-color-fg-muted)"></i>Buy &amp; hold</span>
+        <span id="range" style="color:var(--pl-color-fg-muted)"></span></div>
+    </div>
+    <div class="chart__body">
+      <svg id="svg" viewBox="0 0 800 260" preserveAspectRatio="none"></svg>
+    </div>
   </div>
-  <div class="metrics" id="metrics"></div>
+  <div class="pl-stats" id="metrics"></div>
   <p class="note">Equity is growth of $1, net of 5bps cost + 2bps slippage on turnover.
     Past performance is not indicative of future results. The paper broker (a separate
     tool) stays OFF until a mandate exists.</p>
 </div>
 <script>
-// ── ADR 0026 handshake: receive the bearer token + theme tokens from the console.
-let TOKEN = null;
-window.addEventListener("message", (e) => {
-  const d = e.data || {};
-  if (d.type === "protoagent:init") {
-    if (d.token) TOKEN = d.token;
-    if (d.theme) for (const [k, v] of Object.entries(d.theme)) {
-      // map --pl-* ground tokens onto our vars when present
-      if (k.includes("bg")) document.documentElement.style.setProperty("--bg", v);
-      if (k.includes("accent")) document.documentElement.style.setProperty("--accent", v);
-    }
-  }
-});
+// ── ADR 0038 handshake: receive the bearer token + curated theme from the console,
+// bridging the curated {bg,bgPanel,…} keys onto the DS --pl-* tokens.
+const TMAP={bg:["--pl-color-bg"],bgPanel:["--pl-color-bg-raised","--pl-color-bg-subtle"],fg:["--pl-color-fg"],fgMuted:["--pl-color-fg-muted"],brand:["--pl-color-accent"],border:["--pl-color-border"]};
+let TOKEN=null;
+function applyTheme(t){const r=document.documentElement;for(const[k,v] of Object.entries(t||{}))(TMAP[k]||(k.startsWith("--pl-")?[k]:[])).forEach(p=>v&&r.style.setProperty(p,v));}
+window.addEventListener("message",(e)=>{const d=e.data||{};
+  if(d.type==="protoagent:init"){if(d.token)TOKEN=d.token;applyTheme(d.theme);}
+  else if(d.type==="protoagent:theme")applyTheme(d.theme);});
 
 const api = (p) => fetch(p, TOKEN ? {headers: {Authorization: "Bearer " + TOKEN}} : {}).then(r => r.json());
 const $ = (id) => document.getElementById(id);
@@ -163,14 +151,14 @@ function drawCurve(dates, equity, benchmark) {
   const y = (v) => H - pad - ((v - lo) / (hi - lo || 1)) * (H - 2 * pad);
   const path = (arr) => arr.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
   $("svg").innerHTML =
-    `<path d="${path(benchmark)}" fill="none" stroke="#8b8b95" stroke-width="1.5" opacity="0.8"/>` +
-    `<path d="${path(equity)}" fill="none" stroke="#a78bfa" stroke-width="2"/>`;
+    `<path d="${path(benchmark)}" fill="none" stroke="var(--pl-color-fg-muted)" stroke-width="1.5" opacity="0.8"/>` +
+    `<path d="${path(equity)}" fill="none" stroke="var(--pl-color-accent)" stroke-width="2"/>`;
 }
 
 function showMetrics(m) {
   const cell = (k, label, v, signed) => {
     const cls = signed ? (v >= 0 ? "pos" : "neg") : "";
-    return `<div class="metric"><div class="k">${label}</div><div class="v ${cls}">${v}</div></div>`;
+    return `<div><div class="pl-stat__num ${cls}">${v}</div><div class="pl-stat__label">${label}</div></div>`;
   };
   $("metrics").innerHTML =
     cell("cagr", "CAGR", fmtPct(m.cagr), true) +
