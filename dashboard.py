@@ -77,7 +77,14 @@ def build_dashboard_router(config: dict | None):
 _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quant Desk</title>
-<link rel="stylesheet" href="/_ds/plugin-kit.css">
+<script>
+  // Slug-aware base (protoAgent ADR 0042, plugin-view rule 3): the iframe loads at
+  // /plugins/... on the host window but /agents/<slug>/plugins/... through the fleet
+  // proxy — hardcoded absolute paths there hit the HUB agent, never this one. The kit
+  // CSS link is injected so its href carries the base too.
+  window.__base = location.pathname.split("/plugins/")[0];
+  document.write('<link rel="stylesheet" href="' + window.__base + '/_ds/plugin-kit.css">');
+</script>
 <style>
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;background:var(--pl-color-bg);color:var(--pl-color-fg);
@@ -132,7 +139,7 @@ window.addEventListener("message",(e)=>{const d=e.data||{};
   if(d.type==="protoagent:init"){if(d.token)TOKEN=d.token;applyTheme(d.theme);}
   else if(d.type==="protoagent:theme")applyTheme(d.theme);});
 
-const api = (p) => fetch(p, TOKEN ? {headers: {Authorization: "Bearer " + TOKEN}} : {}).then(r => r.json());
+const api = (p) => fetch(window.__base + p, TOKEN ? {headers: {Authorization: "Bearer " + TOKEN}} : {}).then(r => r.json());
 const $ = (id) => document.getElementById(id);
 const fmtPct = (x) => (x == null ? "–" : (x * 100).toFixed(1) + "%");
 const fmtNum = (x) => (x == null ? "–" : (+x).toFixed(2));
