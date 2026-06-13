@@ -1,6 +1,6 @@
 id: prototrader-finance
 name: protoTrader Finance
-version: 0.1.1
+version: 0.2.0
 description: >-
   The full-bundle finance plugin — every protoAgent contribution type in one
   installable repo. 13 market/quant **tools** (market data, vectorized backtest,

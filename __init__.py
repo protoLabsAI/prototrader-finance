@@ -35,7 +35,7 @@ def register(registry) -> None:
     from .backtest.tools import get_backtest_tools
     from .behavioral.tools import get_behavioral_tools
     from .broker.tools import get_broker_tools
-    from .dashboard import build_dashboard_router
+    from .dashboard import build_dashboard_router, build_data_router
     from .data.tools import get_finance_tools
     from .desk.subagents import desk_subagents
     from .factors.tools import get_factor_tools
@@ -59,9 +59,12 @@ def register(registry) -> None:
         registry.register_subagent(cfg)
         n_subagents += 1
 
-    # Console view (ADR 0026) — the Quant Desk dashboard page + its backtest API,
-    # mounted at /plugins/prototrader-finance/…. Reads plugin config (ADR 0019).
+    # Console view (ADR 0026) — TWO routers at DISTINCT prefixes: the PAGE stays
+    # on the public /plugins/prototrader-finance (an iframe page-load can't carry
+    # a bearer), the DATA routes mount under /api/plugins/prototrader-finance so
+    # they inherit the operator bearer gate (plugin-view rule 2, issue #3).
     registry.register_router(build_dashboard_router(registry.config))
+    registry.register_router(build_data_router(registry.config), prefix="/api/plugins/prototrader-finance")
 
     log.info(
         "[prototrader-finance] registered %d tools + %d desk subagents + Quant Desk view "
