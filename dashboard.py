@@ -19,10 +19,12 @@ _STRATEGIES = ["ma_cross", "rsi_meanrev", "breakout", "buy_hold"]
 
 
 def build_dashboard_router(config: dict | None):
-    """A FastAPI router for the dashboard page + its backtest API. Closes over the
-    plugin config (ADR 0019) so the page defaults to the configured benchmark."""
+    """The PAGE router — stays on the PUBLIC ``/plugins/prototrader-finance``
+    prefix: a browser iframe page-load can't carry an Authorization bearer, so a
+    gated page would 401-blank under the token gate (plugin-view rule 2). The
+    page itself is chrome; everything it FETCHES is gated (build_data_router)."""
     from fastapi import APIRouter
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi.responses import HTMLResponse
 
     router = APIRouter()
     default_symbol = ((config or {}).get("default_benchmark") or "SPY").upper()
@@ -31,11 +33,25 @@ def build_dashboard_router(config: dict | None):
     async def _dashboard():  # the iframe page (manifest views[].path)
         return HTMLResponse(_PAGE.replace("__DEFAULT_SYMBOL__", default_symbol))
 
-    @router.get("/api/strategies")
+    return router
+
+
+def build_data_router(config: dict | None):
+    """The DATA routes — mounted under ``/api/plugins/prototrader-finance`` so
+    they inherit the operator bearer gate (rule 2, issue #3). Previously these
+    lived under the public ``/plugins/`` prefix: on a token-gated deployment
+    anyone who could reach the port could run backtests without the bearer."""
+    from fastapi import APIRouter
+    from fastapi.responses import JSONResponse
+
+    router = APIRouter()
+    default_symbol = ((config or {}).get("default_benchmark") or "SPY").upper()
+
+    @router.get("/strategies")
     async def _strategies():
         return JSONResponse({"strategies": _STRATEGIES})
 
-    @router.get("/api/backtest")
+    @router.get("/backtest")
     async def _backtest(symbol: str = default_symbol, strategy: str = "ma_cross", period: str = "2y"):
         """Run the backtest engine and return both equity curves + headline metrics.
 
@@ -129,23 +145,32 @@ _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
     Past performance is not indicative of future results. The paper broker (a separate
     tool) stays OFF until a mandate exists.</p>
 </div>
-<script>
-// ── ADR 0038 handshake: receive the bearer token + curated theme from the console,
-// bridging the curated {bg,bgPanel,…} keys onto the DS --pl-* tokens.
-const TMAP={bg:["--pl-color-bg"],bgPanel:["--pl-color-bg-raised","--pl-color-bg-subtle"],fg:["--pl-color-fg"],fgMuted:["--pl-color-fg-muted"],brand:["--pl-color-accent"],border:["--pl-color-border"]};
-let TOKEN=null;
-function applyTheme(t){const r=document.documentElement;for(const[k,v] of Object.entries(t||{}))(TMAP[k]||(k.startsWith("--pl-")?[k]:[])).forEach(p=>v&&r.style.setProperty(p,v));}
-window.addEventListener("message",(e)=>{const d=e.data||{};
-  if(d.type==="protoagent:init"){if(d.token)TOKEN=d.token;applyTheme(d.theme);}
-  else if(d.type==="protoagent:theme")applyTheme(d.theme);});
+<script type="module">
+// ── The DS plugin-kit owns the protoagent:init handshake (bearer + theme, incl.
+// live re-themes onto the --pl-* tokens) and slug-aware authed fetches — replacing
+// the hand-rolled TMAP/listener this page carried. plugin-kit.js is an ES MODULE,
+// so it loads via dynamic import (a classic <script src> throws on its exports;
+// see protoAgent docs/how-to/build-a-plugin-view.md). Older host without /_ds:
+// fall back to a tokenless same-origin shim (fine locally; gated instances always
+// serve the kit).
+let kit;
+try { kit = await import(window.__base + "/_ds/plugin-kit.js"); }
+catch (e) { kit = { initPluginView(){}, apiFetch: (p, i) => fetch(window.__base + p, i) }; }
+// Boot ONCE, on whichever fires first: the handshake (normal — and on a gated
+// instance the bearer arrives with it, so data calls authenticate), or a short
+// timer for the no-handshake case (standalone page / older host).
+let booted = false;
+function boot(){ if (booted) return; booted = true; loadStrategies().then(run); }
+kit.initPluginView(boot);
+setTimeout(boot, 800);
 
-const api = (p) => fetch(window.__base + p, TOKEN ? {headers: {Authorization: "Bearer " + TOKEN}} : {}).then(r => r.json());
+const api = (p) => kit.apiFetch(p).then(r => r.json());
 const $ = (id) => document.getElementById(id);
 const fmtPct = (x) => (x == null ? "–" : (x * 100).toFixed(1) + "%");
 const fmtNum = (x) => (x == null ? "–" : (+x).toFixed(2));
 
 async function loadStrategies() {
-  const r = await api("/plugins/prototrader-finance/api/strategies").catch(() => ({strategies: ["ma_cross"]}));
+  const r = await api("/api/plugins/prototrader-finance/strategies").catch(() => ({strategies: ["ma_cross"]}));
   $("strategy").innerHTML = r.strategies.map(s => `<option value="${s}">${s}</option>`).join("");
 }
 
@@ -164,7 +189,9 @@ function drawCurve(dates, equity, benchmark) {
 
 function showMetrics(m) {
   const cell = (k, label, v, signed) => {
-    const cls = signed ? (v >= 0 ? "pos" : "neg") : "";
+    // v is already FORMATTED ("11.8%") — parse it back for the sign, else the
+    // string compare made every positive metric render as a loss.
+    const cls = signed ? (parseFloat(v) >= 0 ? "pos" : "neg") : "";
     return `<div><div class="pl-stat__num ${cls}">${v}</div><div class="pl-stat__label">${label}</div></div>`;
   };
   $("metrics").innerHTML =
@@ -183,7 +210,7 @@ async function run(ev) {
   const sym = encodeURIComponent($("symbol").value.trim() || "SPY");
   const strat = $("strategy").value, per = $("period").value;
   try {
-    const r = await api(`/plugins/prototrader-finance/api/backtest?symbol=${sym}&strategy=${strat}&period=${per}`);
+    const r = await api(`/api/plugins/prototrader-finance/backtest?symbol=${sym}&strategy=${strat}&period=${per}`);
     if (!r.ok) { $("err").textContent = "Backtest unavailable: " + r.error; $("err").hidden = false; }
     else {
       $("range").textContent = `${r.start} → ${r.end} · ${r.symbol}`;
@@ -195,5 +222,4 @@ async function run(ev) {
 }
 
 $("f").addEventListener("submit", run);
-loadStrategies().then(run);
 </script></body></html>"""
