@@ -146,8 +146,11 @@ def build_data_router(config: dict | None):
         invested = sum(p["qty"] * marks.get(s, p["avg_price"]) for s, p in book["positions"].items())
         cost = sum(p["qty"] * p["avg_price"] for s, p in book["positions"].items())
 
+        from .. import seams
+
         return {
             "ok": True,
+            "equity_history": seams.equity_history(),
             "portfolio": {
                 "demo": book["demo"],
                 "equity": _round(equity, 2),
@@ -181,6 +184,10 @@ def build_data_router(config: dict | None):
             sim = engine.simulate(df, pos)
             m = engine.metrics(sim, df.index)
             keys = ("cagr", "sharpe", "max_dd", "total_return", "bh_total_return", "trades", "exposure")
+            from .. import events
+
+            events.emit(events.BACKTEST_COMPLETED, symbol=bars.symbol, strategy=strategy,
+                        period=period, sharpe=m.get("sharpe"), source=bars.source)
             return JSONResponse(
                 {
                     "ok": True,
@@ -233,6 +240,13 @@ def build_data_router(config: dict | None):
             rows.append(r)
         rows.sort(key=lambda r: abs(r.get("ir") or 0), reverse=True)
 
+        from .. import events
+
+        best = next((r for r in rows if not r.get("error")), {})
+        events.emit(events.FACTOR_STUDY_COMPLETED, period=period,
+                    universe_size=len(close.columns), best_factor=best.get("factor"),
+                    best_ic=best.get("mean_ic"))
+
         return {
             "ok": True,
             "period": period,
@@ -265,7 +279,7 @@ def build_data_router(config: dict | None):
                     "starting_cash": _round(book["starting_cash"], 2),
                     "realized_pnl": _round(book["realized_pnl"], 2),
                     "positions": _position_rows(book, marks),
-                    "orders": list(reversed(book["orders"]))[:100],
+                    "orders": _order_rows(book["orders"])[:100],
                 }
             )
         except Exception as e:
@@ -363,6 +377,36 @@ def _load_book(broker, cfg: dict) -> dict:
 
     return {"demo": False, "cash": 0.0, "starting_cash": 0.0, "realized_pnl": 0.0,
             "positions": {}, "orders": []}
+
+
+def _order_rows(orders: list) -> list[dict]:
+    """One shape for the ledger, newest first.
+
+    The live engine records ``fill_price``/``commission``; the bundled demo book
+    records ``price``/``fee``. The view read the latter, so every REAL fill would
+    have rendered its price and fee as dashes — a ledger quietly missing the two
+    numbers that matter most.
+    """
+    out = []
+    for o in reversed(orders or []):
+        price = o.get("price", o.get("fill_price"))
+        qty = o.get("qty")
+        out.append(
+            {
+                "id": o.get("id"),
+                "ts": o.get("ts"),
+                "symbol": o.get("symbol"),
+                "side": o.get("side"),
+                "qty": qty,
+                "price": _round(price, 2),
+                "notional": _round(o.get("notional") or ((qty or 0) * (price or 0)), 2),
+                "fee": _round(o.get("fee", o.get("commission", 0.0)), 2),
+                "realized_pnl": _round(o.get("realized_pnl"), 2),
+                "status": o.get("status", "filled"),
+                "demo": bool(o.get("demo")),
+            }
+        )
+    return out
 
 
 def _position_rows(book: dict, marks: dict) -> list[dict]:

@@ -1,6 +1,6 @@
 id: prototrader-finance
 name: protoTrader Finance
-version: 0.2.0
+version: 0.3.0
 description: >-
   The full-bundle finance plugin — every protoAgent contribution type in one
   installable repo. 13 market/quant **tools** (market data, vectorized backtest,
@@ -26,10 +26,35 @@ requires_pip:
   - pandas>=2
   - numpy>=1.26
 
+# Event contract (ADR 0039) — auto-namespaced `prototrader-finance.*`. These are
+# the plugin's PUBLIC api: another plugin subscribes by topic and never imports
+# this one. The console lights the rail dot on them for free.
+emits:
+  - backtest_completed        # {symbol, strategy, period, sharpe, source}
+  - factor_study_completed    # {period, universe_size, best_factor, best_ic}
+  - order_filled              # {symbol, side, qty, price, notional}
+  - mandate_armed             # {enabled, mode}
+  - trading_halted            # {watch} — kill-switch engaged
+  - drawdown_breach           # {watch} — the drawdown tripwire fired
+  - data_refreshed            # {reason, symbols}
+# Own-bus subscriptions (reactive housekeeping): a fill or a newly-armed mandate
+# invalidates the dashboard's memoized gate, which a tool call would otherwise
+# leave stale until the TTL expired.
+subscribes:
+  - prototrader-finance.order_filled
+  - prototrader-finance.mandate_armed
+
+# The console renders a "Test connection" button (ADR 0029) — POST
+# /api/config/test-prototrader_finance reports WHICH data tier is reachable.
+test: true
+
 repository: https://github.com/protoLabsAI/prototrader-finance
 homepage: https://github.com/protoLabsAI/prototrader-finance#readme
 guide_url: "https://github.com/protoLabsAI/prototrader-finance#install"   # Settings "Setup guide" link (ADR 0059)
-min_protoagent_version: "0.21.0"
+# Watches + watch hooks (ADR 0067, host PR #1507) are the highest floor here;
+# sdk.plugin_store and the metric timeseries came later but this plugin degrades
+# gracefully without them, so 0.78.0 is the honest hard gate.
+min_protoagent_version: "0.78.0"
 
 # Declarative (surfaced for review, not enforced): reaches market-data hosts;
 # the paper broker writes its ledger/mandate under the config dir.
@@ -51,5 +76,7 @@ settings:
 
 # Console view (ADR 0026) — a left-rail icon opening the Quant Desk dashboard
 # (iframe of a page this plugin serves at /plugins/prototrader-finance/dashboard).
+# ONE rail icon with tabs (Overview / Backtest / Factors / Ledger), not four —
+# the rail is shared space and every surface is another thing to maintain.
 views:
   - { id: dashboard, label: "Quant Desk", icon: LineChart, path: /plugins/prototrader-finance/dashboard }

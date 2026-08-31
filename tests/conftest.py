@@ -58,6 +58,20 @@ def _install_host_stubs() -> None:
     sys.modules["graph.subagents.config"] = cfg_mod
     subagents.config = cfg_mod
 
+    import dataclasses
+
+    goals = types.ModuleType("graph.goals")
+
+    @dataclasses.dataclass
+    class VerifyResult:
+        met: bool
+        reason: str = ""
+        evidence: str = ""
+
+    goals.VerifyResult = VerifyResult
+    sys.modules["graph.goals"] = goals
+    graph.goals = goals
+
 
 _install_host_stubs()
 
@@ -161,7 +175,11 @@ class FakeRegistry:
         self.chat_commands[name] = handler
 
     def register_goal_verifier(self, name, fn, description=""):
-        self.verifiers[name] = (fn, description)
+        # Mirror the host: an unqualified name is namespaced to the plugin id
+        # (graph/plugins/registry.py). A fake that skips this lets a test assert
+        # a key production never produces.
+        key = name if ":" in name else f"{self.plugin_id}:{name}"
+        self.verifiers[key] = (fn, description)
 
     def register_a2a_skill(self, spec):
         self.a2a_skills.append(spec)

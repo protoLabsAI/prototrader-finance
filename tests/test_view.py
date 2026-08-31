@@ -140,3 +140,21 @@ def test_manifest_declares_exactly_one_view():
     manifest = yaml.safe_load((ROOT / "protoagent.plugin.yaml").read_text())
     assert len(manifest["views"]) == 1
     assert manifest["views"][0]["path"] == f"{PUBLIC}/dashboard"
+
+
+def test_ledger_normalizes_both_order_shapes(client, offline, isolated_home):
+    """The live engine writes fill_price/commission; the bundled book writes
+    price/fee. The view reads ONE shape, so both must arrive normalized — the
+    alternative is a real fill rendering its price and fee as dashes."""
+    import json
+
+    load("store")
+    (isolated_home / "broker_paper.json").write_text(json.dumps({
+        "cash": 5000.0, "realized_pnl": 12.0, "positions": {},
+        "orders": [{"id": "o1", "ts": "2026-08-30T00:00:00Z", "symbol": "AAPL", "side": "buy",
+                    "qty": 10, "fill_price": 200.25, "commission": 0.2,
+                    "notional": 2002.5, "status": "filled"}]}))
+    o = client.get(f"{GATED}/ledger").json()["orders"][0]
+    assert o["price"] == 200.25, "engine fill_price must surface as price"
+    assert o["fee"] == 0.2, "engine commission must surface as fee"
+    assert o["notional"] == 2002.5

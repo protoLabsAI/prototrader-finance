@@ -303,4 +303,11 @@ class PaperBroker:
         self.state.orders.append(order)
         self._save()
         self._audit({"event": "fill", **order})
+        # ADR 0039: broadcast the fill so the dashboard invalidates and any peer
+        # plugin can react. Wrapped by events.emit — a bus failure never fails a fill.
+        from .. import events, seams
+
+        events.emit(events.ORDER_FILLED, symbol=symbol, side=side, qty=qty,
+                    price=round(fill_px, 4), notional=round(qty * fill_px, 2))
+        seams.snapshot_equity(_CONFIG)
         return order

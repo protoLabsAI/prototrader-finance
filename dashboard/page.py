@@ -97,6 +97,8 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
   svg{display:block;width:100%}
   .curve{height:280px}
   .spark{width:88px;height:22px;vertical-align:middle}
+  .eqspark{width:100%;height:44px;margin-top:8px}
+  .stat--wide{grid-column:span 2}
   .legend{display:flex;gap:16px;font-size:11.5px;color:var(--pl-color-fg-muted);align-items:center}
   .legend i{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
 
@@ -136,6 +138,7 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
   <section id="pane-overview" class="pane pane--on">
     <div id="ov-stats" class="stats"></div>
     <div id="ov-demo"></div>
+    <div id="ov-equity"></div>
     <div class="pl-card"><div class="pl-panel-header">
         <h2 class="pl-panel-header__title">Positions</h2>
         <span class="pl-panel-header__kicker">marked at the last available close</span></div>
@@ -242,15 +245,15 @@ function setProv(p) {
 }
 
 // ── sparkline ────────────────────────────────────────────────────────────────
-function spark(vals) {
+function spark(vals, cls = "spark", W = 88, H = 22) {
   if (!vals || vals.length < 2) return "";
-  const W = 88, H = 22, lo = Math.min(...vals), hi = Math.max(...vals), r = (hi - lo) || 1;
+  const lo = Math.min(...vals), hi = Math.max(...vals), r = (hi - lo) || 1;
   const d = vals.map((v, i) =>
     (i ? "L" : "M") + (i / (vals.length - 1) * W).toFixed(1) + " " + (H - 1 - (v - lo) / r * (H - 2)).toFixed(1)
   ).join(" ");
   const up = vals[vals.length - 1] >= vals[0];
   const stroke = up ? "var(--pl-color-status-success)" : "var(--pl-color-status-error)";
-  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
     <path d="${d}" fill="none" stroke="${stroke}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
@@ -305,6 +308,17 @@ async function loadOverview() {
     { label: "Realized", value: signed(p.realized_pnl, usd) },
     { label: "Total return", value: signed(p.total_return, pct) },
   ]);
+
+  // sdk.record_metric gives the book a HISTORY, which a point-in-time payload
+  // can't. With no host (or a fresh install) there are no points yet, so the
+  // panel is omitted rather than drawn as a flat, meaningless line.
+  const eq = (d.equity_history || []).map(x => x.value);
+  $("ov-equity").innerHTML = eq.length > 2
+    ? `<div class="pl-card"><div class="pl-panel-header">
+         <h2 class="pl-panel-header__title">Equity over time</h2>
+         <span class="pl-panel-header__kicker">${eq.length} recorded snapshots · sdk.record_metric</span></div>
+       <div class="body">${spark(eq, "eqspark", 800, 44)}</div></div>`
+    : "";
 
   $("ov-demo").innerHTML = p.demo
     ? `<div class="pl-callout pl-callout--info" style="margin-bottom:var(--pl-space-4)">

@@ -30,56 +30,111 @@ log = logging.getLogger("protoagent.plugins.prototrader-finance")
 def register(registry) -> None:
     """Wire the whole finance bundle into the agent (ADR 0018). Called once at load.
 
-    skills/ + workflows/ subdirs auto-discover (ADR 0027) — no call needed for them.
+    Every group is wrapped: a plugin that half-loads with a logged error beats one
+    whose tools vanish because a watch could not be armed. `skills/` + `workflows/`
+    auto-discover (ADR 0027) — no call needed for them.
+
+    The seams NOT used, each with a standing rationale, are in docs/sdk-parity.md.
     """
+    from . import events, seams, verifiers
     from .backtest.tools import get_backtest_tools
     from .behavioral.tools import get_behavioral_tools
+    from .broker import engine as broker_engine
     from .broker.tools import get_broker_tools
     from .dashboard import build_dashboard_router, build_data_router
     from .data.tools import get_finance_tools
     from .desk.subagents import desk_subagents
     from .factors.tools import get_factor_tools
 
+    counts: dict[str, int] = {}
+
+    def group(name: str, fn):
+        """Run one contribution group; log and continue if it fails."""
+        try:
+            counts[name] = fn() or 0
+        except Exception:
+            counts[name] = 0
+            log.exception("[prototrader-finance] %s failed to register", name)
+
     # The paper broker resolves its mandate path from the plugin config
     # (`broker_mandate_path`), so hand it the resolved section before any tool runs.
-    from .broker import engine as broker_engine
-
     broker_engine.set_config(registry.config)
+    events.bind(registry)
 
-    # Tools — market data → backtest → factors → behavioral → gated paper broker.
-    n_tools = 0
-    for factory in (
-        get_finance_tools,
-        get_backtest_tools,
-        get_factor_tools,
-        get_behavioral_tools,
-        get_broker_tools,
-    ):
-        tools = list(factory())
-        registry.register_tools(tools)
-        n_tools += len(tools)
+    # ── tools: market data → backtest → factors → behavioural → gated broker ──
+    def _tools():
+        n = 0
+        for factory in (get_finance_tools, get_backtest_tools, get_factor_tools,
+                        get_behavioral_tools, get_broker_tools):
+            tools = list(factory())
+            registry.register_tools(tools)
+            n += len(tools)
+        return n
 
-    # Subagents — the research desk the workflows compose and the lead delegates to.
-    # Wrapped like every other group: a plugin that half-loads with a logged error
-    # is strictly better than one whose tools vanish because a subagent spec broke.
-    n_subagents = 0
-    try:
+    group("tools", _tools)
+
+    # ── subagents: the research desk the lead delegates to via task() ─────────
+    def _subagents():
+        n = 0
         for cfg in desk_subagents():
             registry.register_subagent(cfg)
-            n_subagents += 1
-    except Exception:
-        log.exception("[prototrader-finance] desk subagents failed to register")
+            n += 1
+        return n
 
-    # Console view (ADR 0026) — TWO routers at DISTINCT prefixes: the PAGE stays
-    # on the public /plugins/prototrader-finance (an iframe page-load can't carry
-    # a bearer), the DATA routes mount under /api/plugins/prototrader-finance so
-    # they inherit the operator bearer gate (plugin-view rule 2, issue #3).
-    registry.register_router(build_dashboard_router(registry.config))
-    registry.register_router(build_data_router(registry.config), prefix="/api/plugins/prototrader-finance")
+    group("subagents", _subagents)
+
+    # ── console view: PAGE public, DATA gated (plugin-view rules 1 + 2) ───────
+    def _routers():
+        registry.register_router(build_dashboard_router(registry.config))
+        registry.register_router(build_data_router(registry.config),
+                                 prefix="/api/plugins/prototrader-finance")
+        # ADR 0029 "Test connection" — mounted on /api, not the plugin prefix,
+        # because the console looks for /api/config/test-<config_section>.
+        registry.register_router(seams.build_test_router(registry.config), prefix="/api")
+        return 3
+
+    group("routers", _routers)
+
+    # ── chat command: user-only, deliberately NOT an agent tool ──────────────
+    group("chat_command", lambda: (
+        registry.register_chat_command("quant", seams.make_quant_command(registry.config)) or 1))
+
+    # ── goal + watch verifiers (ADR 0028): ground truth for finance goals ─────
+    def _verifiers():
+        for name, (fn, desc) in verifiers.VERIFIERS.items():
+            registry.register_goal_verifier(name, fn, desc)
+        return len(verifiers.VERIFIERS)
+
+    group("verifiers", _verifiers)
+
+    # ── watch hooks + standing tripwires (ADR 0067) ──────────────────────────
+    def _watches():
+        on_met, on_stalled = seams.make_watch_hooks()
+        registry.register_watch_hook(on_met=on_met, on_stalled=on_stalled)
+        return seams.arm_tripwires(registry.config)
+
+    group("tripwires", _watches)
+
+    # ── lifecycle hooks (ADR 0074): warm the cache at boot and after sleep ────
+    def _lifecycle():
+        on_loaded, on_wake = seams.make_lifecycle_hooks(registry.config)
+        registry.register_lifecycle_hook(on_app_loaded=on_loaded, on_system_wake=on_wake)
+        return 2
+
+    group("lifecycle", _lifecycle)
+
+    # ── A2A card skills: what PEER agents see advertised, typed ───────────────
+    def _a2a():
+        for spec in seams.A2A_SKILLS:
+            registry.register_a2a_skill(spec)
+        return len(seams.A2A_SKILLS)
+
+    group("a2a_skills", _a2a)
+
+    # ── own-bus subscriptions (ADR 0039) ─────────────────────────────────────
+    group("subscriptions", lambda: (events.subscribe(registry) or 2))
 
     log.info(
-        "[prototrader-finance] registered %d tools + %d desk subagents + Quant Desk view "
-        "(workflows/ + skills/ auto-discovered)",
-        n_tools,
-        n_subagents,
+        "[prototrader-finance] registered %s (workflows/ + skills/ auto-discovered)",
+        ", ".join(f"{v} {k}" for k, v in counts.items() if v),
     )
