@@ -33,6 +33,10 @@ def _book(config: dict | None = None) -> dict:
     return _load_book(broker, config or {})
 
 
+class DemoBook(RuntimeError):
+    """No real paper book exists — only the bundled sample."""
+
+
 def _equity_and_peak(config: dict | None = None) -> tuple[float, float, float]:
     """(equity, starting_cash, peak) — peak from the recorded metric series.
 
@@ -43,6 +47,15 @@ def _equity_and_peak(config: dict | None = None) -> tuple[float, float, float]:
     from . import marketdata
 
     book = _book(config)
+    if book.get("demo"):
+        # A verifier's whole job is ground truth. Grading "get the book to +10%"
+        # against a book that was shipped in the repo, already up 5.6%, would hand
+        # back a confident number about money nobody has — and a goal could be
+        # marked achieved before a single order was ever placed.
+        raise DemoBook(
+            "no real paper book yet — the Ledger is showing the bundled sample. "
+            "Arm a mandate and place a paper order before setting a return goal."
+        )
     marks = {}
     for sym in book["positions"]:
         try:
@@ -76,6 +89,8 @@ async def portfolio_return(spec: dict, ctx) -> object:
     target = float((spec.get("args") or {}).get("min_return", 0.10))
     try:
         equity, start, _ = _equity_and_peak()
+    except DemoBook as e:
+        return _result(False, str(e))
     except Exception as e:
         return _result(False, f"could not value the book: {e}")
     if not start:
@@ -97,6 +112,8 @@ async def max_drawdown(spec: dict, ctx) -> object:
     limit = abs(float((spec.get("args") or {}).get("limit", 0.15)))
     try:
         equity, _, peak = _equity_and_peak()
+    except DemoBook as e:
+        return _result(False, str(e))
     except Exception as e:
         return _result(False, f"could not value the book: {e}")
     dd = 0.0 if peak <= 0 else (equity / peak) - 1
@@ -154,7 +171,9 @@ async def factor_alive(spec: dict, ctx) -> object:
 
         universe = [s for s in (marketdata.seed_universe() or fe.DEFAULT_UNIVERSE)
                     if s not in ("SPY", "QQQ") and "-USD" not in s]
-        r = fe.evaluate(name, universe, str(args.get("period", "3y")))
+        # prefer="cache": this runs on a watch cadence, so a live re-fetch of the
+        # whole universe every tick would be a self-inflicted rate limit.
+        r = fe.evaluate(name, universe, str(args.get("period", "3y")), prefer="cache")
     except Exception as e:
         return _result(False, f"factor study failed: {e}")
     if r.get("error"):

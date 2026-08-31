@@ -61,6 +61,13 @@ def snapshot_equity(config: dict | None = None) -> float | None:
         from .dashboard.api import _load_book
 
         book = _load_book(broker, config or {})
+        if book.get("demo"):
+            # The bundled sample book is scenery. Recording its equity would write
+            # fabricated figures into the host's real metric series, where nothing
+            # carries the demo flag — the Overview sparkline would plot them
+            # unlabelled and `max_drawdown` would grade a goal against them.
+            log.debug("[%s] sample book — equity not recorded", PLUGIN_ID)
+            return None
         marks = {}
         for sym in book["positions"]:
             try:
@@ -217,13 +224,10 @@ def make_lifecycle_hooks(config: dict | None):
         try:
             from . import marketdata
 
-            refreshed = 0
-            for sym in (marketdata.seed_universe() or [])[:8]:  # benchmarks first, not all 26
-                try:
-                    if marketdata.bars(sym, "2y", prefer="live").source == "live":
-                        refreshed += 1
-                except Exception:
-                    continue
+            # The WHOLE universe, not the first 8: since paints never go live, an
+            # un-warmed symbol shows the bundled snapshot indefinitely. `warm()`
+            # skips anything still fresh, so this is cheap on a repeat wake.
+            refreshed = marketdata.warm(marketdata.seed_universe() or [])
             snapshot_equity(config)
             if refreshed:
                 events.emit(events.DATA_REFRESHED, reason=reason, symbols=refreshed)

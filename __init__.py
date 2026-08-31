@@ -62,16 +62,18 @@ def register(registry) -> None:
     events.bind(registry)
 
     # ── tools: market data → backtest → factors → behavioural → gated broker ──
-    def _tools():
-        n = 0
-        for factory in (get_finance_tools, get_backtest_tools, get_factor_tools,
-                        get_behavioral_tools, get_broker_tools):
-            tools = list(factory())
+    # Per-factory, not one loop: a factory raising mid-loop used to abort the whole
+    # group AFTER earlier factories had already registered — leaving a partial
+    # toolset live while the log said "0 tools". Now each reports its own outcome
+    # and the others still land.
+    for factory in (get_finance_tools, get_backtest_tools, get_factor_tools,
+                    get_behavioral_tools, get_broker_tools):
+        def _register(f=factory):
+            tools = list(f())
             registry.register_tools(tools)
-            n += len(tools)
-        return n
+            return len(tools)
 
-    group("tools", _tools)
+        group(f"tools:{factory.__name__.removeprefix('get_').removesuffix('_tools')}", _register)
 
     # ── subagents: the research desk the lead delegates to via task() ─────────
     def _subagents():
@@ -139,7 +141,11 @@ def register(registry) -> None:
     # ── own-bus subscriptions (ADR 0039) ─────────────────────────────────────
     group("subscriptions", lambda: (events.subscribe(registry) or 2))
 
+    tool_total = sum(v for k, v in counts.items() if k.startswith("tools:"))
+    summary = [f"{tool_total} tools"] + [
+        f"{v} {k}" for k, v in counts.items() if v and not k.startswith("tools:")
+    ]
     log.info(
         "[prototrader-finance] registered %s (workflows/ + skills/ auto-discovered)",
-        ", ".join(f"{v} {k}" for k, v in counts.items() if v),
+        ", ".join(summary),
     )

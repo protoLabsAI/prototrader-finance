@@ -47,7 +47,7 @@ def test_reversal_predicts_on_mean_reverting_data(monkeypatch):
     e = _engine()
     panel = _mean_reverting_panel()
     # Avoid the network: feed the synthetic panel to evaluate().
-    monkeypatch.setattr(e, "fetch_panel", lambda tickers, period="3y": panel)
+    monkeypatch.setattr(e, "fetch_panel", lambda tickers, period="3y", **kw: panel)
     r = e.evaluate("reversal_1m", universe=list(panel.columns), period="3y", horizon=5, step=10)
     assert "error" not in r
     # On genuinely mean-reverting data, short-term reversal should have +IC.
@@ -60,6 +60,6 @@ def test_momentum_not_alive_on_mean_reverting_data(monkeypatch):
     it should not score 'alive' (positive consistent IC)."""
     e = _engine()
     panel = _mean_reverting_panel()
-    monkeypatch.setattr(e, "fetch_panel", lambda tickers, period="3y": panel)
+    monkeypatch.setattr(e, "fetch_panel", lambda tickers, period="3y", **kw: panel)
     r = e.evaluate("momentum_12_1", universe=list(panel.columns), period="3y", horizon=5, step=10)
     assert r.get("verdict") != "alive"
