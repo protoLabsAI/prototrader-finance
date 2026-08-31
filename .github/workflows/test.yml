@@ -13,8 +13,13 @@ jobs:
       # ever starts working here, a host-only import has leaked to module top and
       # the "host-free" claim is silently false.
       - name: assert host-free
-        run: python -c "
-          import importlib.util, sys;
-          sys.exit('protoAgent host is importable — the suite is no longer host-free')
-          if importlib.util.find_spec('graph') else print('host-free ok')"
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+
+          if importlib.util.find_spec("graph"):
+              sys.exit("protoAgent host is importable - the suite is no longer host-free")
+          print("host-free ok")
+          PY
       - run: pytest -q
