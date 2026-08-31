@@ -7,6 +7,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install -r requirements.txt pytest ruff
+      - run: pip install -r requirements-dev.txt
       - run: ruff check .
-      - run: pytest -q   # offline engine tests (no network, no host framework)
+      # The suite must pass with NO protoAgent host on the path. If `import graph`
+      # ever starts working here, a host-only import has leaked to module top and
+      # the "host-free" claim is silently false.
+      - name: assert host-free
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import sys
+
+          if importlib.util.find_spec("graph"):
+              sys.exit("protoAgent host is importable - the suite is no longer host-free")
+          print("host-free ok")
+          PY
+      - run: pytest -q

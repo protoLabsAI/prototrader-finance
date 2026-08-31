@@ -26,31 +26,24 @@ _INSTALL = "install the finance deps: `pip install -r requirements-finance.txt`"
 # ── data ─────────────────────────────────────────────────────────────────────
 
 def fetch_ohlcv(symbol: str, period: str = "2y", interval: str = "1d",
-                exchange: str = "okx") -> pd.DataFrame:
+                exchange: str = "okx", *, prefer: str = "live") -> pd.DataFrame:
     """OHLCV as a DatetimeIndexed DataFrame (Open/High/Low/Close/Volume).
-    Crypto when ``symbol`` contains '/', else an equity/ETF ticker."""
-    if "/" in symbol:
-        try:
-            import ccxt
-        except ImportError as e:  # pragma: no cover
-            raise RuntimeError(_INSTALL) from e
-        ex = getattr(ccxt, exchange.lower())({"enableRateLimit": True})
-        tf = interval if interval in ("1m", "5m", "15m", "1h", "4h", "1d", "1w") else "1d"
-        limit = {"2y": 730, "1y": 365, "6mo": 180, "5y": 1800, "max": 1000}.get(period, 730)
-        raw = ex.fetch_ohlcv(symbol, timeframe=tf, limit=min(limit, 1000))
-        if not raw:
-            raise RuntimeError(f"no data for {symbol!r} @ {exchange}")
-        df = pd.DataFrame(raw, columns=["ts", "Open", "High", "Low", "Close", "Volume"])
-        df.index = pd.to_datetime(df["ts"], unit="ms")
-        return df[["Open", "High", "Low", "Close", "Volume"]]
-    try:
-        import yfinance as yf
-    except ImportError as e:  # pragma: no cover
-        raise RuntimeError(_INSTALL) from e
-    df = yf.Ticker(symbol).history(period=period, interval=interval)
-    if df is None or df.empty:
-        raise RuntimeError(f"no data for {symbol!r}")
-    return df[["Open", "High", "Low", "Close", "Volume"]]
+
+    Delegates to :mod:`marketdata`, so a failed provider call falls back to the
+    cache and then the bundled snapshot instead of raising. Callers that need to
+    know *which* tier answered should use :func:`fetch_bars` and read
+    ``.source`` — a backtest run against a nine-month-old snapshot is still a
+    valid backtest, but the caller has to be able to say so.
+    """
+    return fetch_bars(symbol, period, interval, exchange, prefer=prefer).frame
+
+
+def fetch_bars(symbol: str, period: str = "2y", interval: str = "1d",
+               exchange: str = "okx", *, prefer: str = "live"):
+    """The same fetch, keeping the provenance envelope (:class:`marketdata.Bars`)."""
+    from .. import marketdata
+
+    return marketdata.bars(symbol, period, interval, prefer=prefer, exchange=exchange)
 
 
 # ── strategies → target position (0/1 long-flat, or -1/0/1) ──────────────────

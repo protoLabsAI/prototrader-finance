@@ -14,8 +14,9 @@ Nothing trades until a mandate is configured AND ``enabled: true``. ``mode: live
 is intentionally NOT implemented — it refuses — so this slice cannot move real
 money; a real broker connector is a separate, deliberate step.
 
-State + mandate + audit live in the live config dir (``PROTOAGENT_CONFIG_DIR``),
-so they're per-agent and survive restarts.
+State, mandate and audit resolve through :mod:`store` — the plugin's own
+instance-scoped directory (``sdk.plugin_store``), so the dev sandbox and every
+fleet member keep separate books and a restart never loses a fill.
 """
 
 from __future__ import annotations
@@ -27,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .. import store
+
 log = logging.getLogger("protoagent.plugins.broker")
 
 # Cost model — a small, fixed friction so paper fills aren't free money.
@@ -34,29 +37,35 @@ _SLIPPAGE_BPS = 5.0       # 0.05% adverse on every fill
 _COMMISSION_BPS = 1.0     # 0.01% per side
 
 
-def _config_dir() -> Path:
-    try:
-        from graph.config_io import _live_config_dir
-        return _live_config_dir()
-    except Exception:  # pragma: no cover - fallback for standalone tests
-        import os
-        return Path(os.environ.get("PROTOAGENT_CONFIG_DIR", "config")).expanduser()
-
+# Every path resolves through `store` — one module owns the "which directory?"
+# question. See store.__doc__ for why v0.1.0's private-symbol import was a bug.
 
 def _state_path() -> Path:
-    return _config_dir() / "broker_paper.json"
+    return store.state_path()
 
 
 def _audit_path() -> Path:
-    return _config_dir() / "broker_audit.jsonl"
+    return store.audit_path()
 
 
 def _mandate_path() -> Path:
-    return _config_dir() / "broker_mandate.yaml"
+    return store.mandate_path(_CONFIG)
 
 
 def _killswitch_path() -> Path:
-    return _config_dir() / "TRADING_HALT"
+    return store.killswitch_path()
+
+
+# The plugin config section, set at register() time so the mandate can honour the
+# operator's `broker_mandate_path` setting. Module-level because the engine is
+# constructed per call and has nowhere else to carry it.
+_CONFIG: dict = {}
+
+
+def set_config(config: dict | None) -> None:
+    """Adopt the resolved plugin config (called from ``register``)."""
+    global _CONFIG
+    _CONFIG = dict(config or {})
 
 
 def _now() -> str:
@@ -100,9 +109,10 @@ class Mandate:
         if self.mode != "paper":
             return False, (f"mode {self.mode!r} is not supported — this build is paper-only. "
                            "A live broker connector is a separate, deliberate step.")
-        if _killswitch_path().exists():
-            return False, (f"KILL-SWITCH engaged ({_killswitch_path().name} present) — all "
-                           "trading halted. Remove the file to resume.")
+        halt = store.killswitch_engaged()
+        if halt is not None:
+            return False, (f"KILL-SWITCH engaged ({halt} present) — all trading halted. "
+                           "Remove the file to resume.")
         return True, "armed (paper)"
 
 
@@ -125,18 +135,41 @@ def _is_crypto(symbol: str) -> bool:
 
 
 def quote(symbol: str) -> float:
-    """Live last price. Equities/ETFs via yfinance; crypto (BTC/USDT) via ccxt."""
+    """Last price for a fill. Live when reachable, else the freshest bar on disk.
+
+    A paper fill marked at a cached close is honest — the audit ledger records the
+    price and the mark's provenance travels with it via :func:`quote_meta`. Refusing
+    to fill at all because the provider blinked would be worse: the demo stops, and
+    the operator learns nothing about the gating stack that is the point of it.
+    """
+    return quote_meta(symbol)[0]
+
+
+def quote_meta(symbol: str) -> tuple[float, str]:
+    """``(price, provenance)`` — e.g. ``(612.4, "live")`` or ``(598.1, "cached · 3h old")``."""
     if _is_crypto(symbol):
-        import ccxt
-        ex = ccxt.okx()
-        return float(ex.fetch_ticker(symbol)["last"])
-    import yfinance as yf
-    fi = yf.Ticker(symbol).fast_info
-    px = fi.get("lastPrice") or fi.get("last_price")
-    if not px:
-        hist = yf.Ticker(symbol).history(period="1d")
-        px = float(hist["Close"].iloc[-1])
-    return float(px)
+        try:
+            import ccxt
+
+            ex = ccxt.okx()
+            return float(ex.fetch_ticker(symbol)["last"]), "live"
+        except Exception:
+            log.warning("[broker] live crypto quote for %s failed — falling back", symbol)
+    else:
+        try:
+            import yfinance as yf
+
+            fi = yf.Ticker(symbol).fast_info
+            px = fi.get("lastPrice") or fi.get("last_price")
+            if px:
+                return float(px), "live"
+        except Exception:
+            log.warning("[broker] live quote for %s failed — falling back", symbol)
+
+    from .. import marketdata
+
+    b = marketdata.bars(symbol, "1mo", prefer="cache")
+    return float(b.frame["Close"].iloc[-1]), b.label()
 
 
 class PaperBroker:
@@ -270,4 +303,11 @@ class PaperBroker:
         self.state.orders.append(order)
         self._save()
         self._audit({"event": "fill", **order})
+        # ADR 0039: broadcast the fill so the dashboard invalidates and any peer
+        # plugin can react. Wrapped by events.emit — a bus failure never fails a fill.
+        from .. import events, seams
+
+        events.emit(events.ORDER_FILLED, symbol=symbol, side=side, qty=qty,
+                    price=round(fill_px, 4), notional=round(qty * fill_px, 2))
+        seams.snapshot_equity(_CONFIG)
         return order
