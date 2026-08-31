@@ -1,0 +1,143 @@
+{
+  "demo": true,
+  "note": "A sample book priced off the bundled snapshot so the Ledger has content on a clean install. These are NOT real fills and no mandate was armed to produce them \u2014 the live broker still refuses to trade until you arm one.",
+  "starting_cash": 250000.0,
+  "cash": 48342.19,
+  "realized_pnl": 834.8,
+  "positions": {
+    "NVDA": {
+      "qty": 80.0,
+      "avg_price": 198.12
+    },
+    "MSFT": {
+      "qty": 60.0,
+      "avg_price": 419.07
+    },
+    "SPY": {
+      "qty": 50.0,
+      "avg_price": 740.81
+    },
+    "XOM": {
+      "qty": 200.0,
+      "avg_price": 146.06
+    },
+    "AAPL": {
+      "qty": 90.0,
+      "avg_price": 310.39
+    },
+    "JNJ": {
+      "qty": 150.0,
+      "avg_price": 259.07
+    },
+    "QQQ": {
+      "qty": 40.0,
+      "avg_price": 710.72
+    }
+  },
+  "orders": [
+    {
+      "id": "demo-001",
+      "ts": "2026-04-16T04:00:00",
+      "symbol": "NVDA",
+      "side": "buy",
+      "qty": 120,
+      "price": 198.12,
+      "type": "market",
+      "fee": 2.38,
+      "notional": 23774.4,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-002",
+      "ts": "2026-05-07T04:00:00",
+      "symbol": "MSFT",
+      "side": "buy",
+      "qty": 60,
+      "price": 419.07,
+      "type": "market",
+      "fee": 2.51,
+      "notional": 25144.2,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-003",
+      "ts": "2026-05-21T04:00:00",
+      "symbol": "SPY",
+      "side": "buy",
+      "qty": 50,
+      "price": 740.81,
+      "type": "market",
+      "fee": 3.7,
+      "notional": 37040.5,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-004",
+      "ts": "2026-06-12T04:00:00",
+      "symbol": "XOM",
+      "side": "buy",
+      "qty": 200,
+      "price": 146.06,
+      "type": "market",
+      "fee": 2.92,
+      "notional": 29212.0,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-005",
+      "ts": "2026-07-07T04:00:00",
+      "symbol": "AAPL",
+      "side": "buy",
+      "qty": 90,
+      "price": 310.39,
+      "type": "market",
+      "fee": 2.79,
+      "notional": 27935.1,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-006",
+      "ts": "2026-08-06T04:00:00",
+      "symbol": "NVDA",
+      "side": "sell",
+      "qty": 40,
+      "price": 218.99,
+      "type": "market",
+      "fee": 0.88,
+      "notional": 8759.6,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-007",
+      "ts": "2026-08-14T04:00:00",
+      "symbol": "JNJ",
+      "side": "buy",
+      "qty": 150,
+      "price": 259.07,
+      "type": "market",
+      "fee": 3.89,
+      "notional": 38860.5,
+      "status": "filled",
+      "demo": true
+    },
+    {
+      "id": "demo-008",
+      "ts": "2026-08-25T04:00:00",
+      "symbol": "QQQ",
+      "side": "buy",
+      "qty": 40,
+      "price": 710.72,
+      "type": "market",
+      "fee": 2.84,
+      "notional": 28428.8,
+      "status": "filled",
+      "demo": true
+    }
+  ]
+}

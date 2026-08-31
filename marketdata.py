@@ -48,6 +48,13 @@ _PERIOD_DAYS = {
 # Daily bars change once a day; 6h keeps a demo snappy without serving yesterday.
 CACHE_TTL_S = 6 * 3600
 
+# A live fetch ALWAYS pulls this window, whatever period was asked for, and the
+# result is sliced down afterwards. The cache key is (symbol, interval) with no
+# period in it, so without this a "1y" fetch would poison every later "5y" read:
+# `_slice` can trim a frame but never extend one, and the caller would silently
+# get one year of bars back from a five-year request.
+CACHE_PERIOD = "5y"
+
 
 @dataclass(frozen=True)
 class Bars:
@@ -228,13 +235,14 @@ def bars(
         return Bars(_slice(cached[0], period), sym, "cache", cached[1])
 
     try:
-        df = _fetch_live(sym, period, interval, exchange)
+        # Fetch the superset, cache it whole, hand back the requested slice.
+        df = _fetch_live(sym, CACHE_PERIOD, interval, exchange)
         now = time.time()
         try:
             _write_frame(_cache_path(sym, interval), df, now)
         except Exception:
             log.exception("[prototrader-finance] could not cache %s", sym)
-        return Bars(df, sym, "live", now)
+        return Bars(_slice(df, period), sym, "live", now)
     except Exception as exc:
         note = f"live fetch failed ({type(exc).__name__}: {exc})"
         log.warning("[prototrader-finance] %s for %s — falling back", note, sym)

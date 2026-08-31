@@ -40,12 +40,16 @@ def _load_marketdata():
 # The demo universe. Broad enough for a cross-sectional factor study (11 sectors
 # represented), liquid enough that the curves are recognisable in a demo, and
 # small enough that the snapshot stays a few hundred KB.
+# Deliberately a SUPERSET of factors.engine.DEFAULT_UNIVERSE, so a factor study
+# run offline covers the same names as one run live — the demo and the tools tell
+# the same story instead of quietly using different universes.
 UNIVERSE = [
-    "SPY", "QQQ",                                    # benchmarks
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", # mega-cap tech
-    "AVGO", "TSLA",
-    "JPM", "XOM", "JNJ", "WMT", "UNH", "LLY",        # sector spread
-    "BTC-USD", "ETH-USD",                            # crypto
+    "SPY", "QQQ",                                              # benchmarks
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",   # DEFAULT_UNIVERSE
+    "JPM", "V", "UNH", "XOM", "JNJ", "PG", "HD", "KO", "PEP",
+    "CVX", "MRK", "WMT", "COST",
+    "AVGO", "LLY",                                             # extra sector spread
+    "BTC-USD", "ETH-USD",                                      # crypto
 ]
 
 PERIOD = "5y"  # one long snapshot; marketdata._slice serves shorter windows from it

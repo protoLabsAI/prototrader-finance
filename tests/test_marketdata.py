@@ -174,3 +174,27 @@ def test_panel_drops_a_dead_symbol_instead_of_failing(offline):
 def test_panel_raises_only_when_nothing_resolves(offline):
     with pytest.raises(RuntimeError, match="no data for any symbol"):
         offline.panel(["NOPE1", "NOPE2"], "1y")
+
+
+def test_a_short_request_does_not_poison_a_long_one(isolated_home, monkeypatch):
+    """The cache key is (symbol, interval) with no period, so a live fetch must
+    always pull the SUPERSET window. Otherwise a "1y" read writes a 252-bar cache
+    that a later "5y" read happily serves — `_slice` trims, it cannot extend, and
+    the caller gets a fifth of the history it asked for with no error."""
+    md = load("marketdata")
+    asked = []
+
+    def _fake(sym, period, interval, exchange):
+        asked.append(period)
+        return _frame(n=1400)
+
+    monkeypatch.setattr(md, "_fetch_live", _fake)
+
+    short = md.bars("FAKE", "1y", prefer="live")
+    assert asked == [md.CACHE_PERIOD], "a live fetch must request the cache superset"
+    assert len(short.frame) <= 252, "the caller still gets only the window it asked for"
+
+    monkeypatch.setattr(md, "_fetch_live", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    long = md.bars("FAKE", "5y", prefer="cache")
+    assert long.source == "cache"
+    assert len(long.frame) > 252, "the cache held the superset, so 5y is still answerable"
