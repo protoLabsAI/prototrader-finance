@@ -280,7 +280,7 @@ def build_data_router(config: dict | None):
         rows = []
         for name, blurb in fe.FACTORS.items():
             try:
-                r = fe.evaluate(name, list(close.columns), period)
+                r = fe.evaluate(name, list(close.columns), period, prefer=prefer)
             except Exception as e:  # one bad factor must not empty the table
                 r = {"factor": name, "error": str(e)}
             r["description"] = blurb
@@ -310,15 +310,22 @@ def build_data_router(config: dict | None):
         try:
             marketdata, broker = _deps()
             book = _load_book(broker, cfg)
-            marks = {}
+            marks, sources = {}, set()
             for sym in book["positions"]:
                 try:
-                    marks[sym] = float(marketdata.bars(sym, "1mo", prefer=_prefer(refresh)).frame["Close"].iloc[-1])
+                    b = marketdata.bars(sym, "1mo", prefer=_prefer(refresh))
+                    marks[sym] = float(b.frame["Close"].iloc[-1])
+                    sources.add(b.source)
                 except Exception:
                     continue
             return JSONResponse(
                 {
                     "ok": True,
+                    # The Ledger marks positions off the same tiered price path as
+                    # every other pane, so it owes the same disclosure. Without this
+                    # its marks sat under whatever chip the Overview last set — a
+                    # months-old snapshot displayed beneath "live · just now".
+                    "provenance": _provenance(sources),
                     "demo": book["demo"],
                     "note": book.get("note"),
                     "gate": _gate(broker),

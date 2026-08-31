@@ -1,6 +1,6 @@
 id: prototrader-finance
 name: protoTrader Finance
-version: 0.3.0
+version: 0.3.1
 description: >-
   The full-bundle finance plugin — every protoAgent contribution type in one
   installable repo. 13 market/quant **tools** (market data, vectorized backtest,
@@ -72,7 +72,7 @@ secrets: [market_data_api_key]
 settings:
   - { key: default_benchmark, label: "Default benchmark", type: string, description: "Buy-and-hold benchmark for the dashboard + backtests (e.g. SPY, QQQ)." }
   - { key: market_data_api_key, label: "Market-data API key (optional)", type: secret, description: "Optional premium data-provider key; blank uses the keyless yfinance/ccxt path." }
-  - { key: broker_mandate_path, label: "Broker mandate path", type: string, description: "Paper-broker mandate file (blank = config/broker_mandate.yaml). The broker stays OFF until this exists." }
+  - { key: broker_mandate_path, label: "Broker mandate path", type: string, description: "Paper-broker mandate file. Blank uses broker_mandate.yaml inside the plugin's own store — the Ledger tab shows the exact path. The broker stays OFF until this file exists and sets enabled: true." }
 
 # Console view (ADR 0026) — a left-rail icon opening the Quant Desk dashboard
 # (iframe of a page this plugin serves at /plugins/prototrader-finance/dashboard).

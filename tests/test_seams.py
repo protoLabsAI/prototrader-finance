@@ -86,11 +86,39 @@ def test_tripwire_verifiers_answer_offline(offline, isolated_home):
     (isolated_home / "TRADING_HALT").touch()
     assert asyncio.run(_run(v.trading_halted)).met is True
 
-    dd = asyncio.run(_run(v.max_drawdown, {"limit": 0.15}))
-    assert dd.met is False and "drawdown" in dd.reason
 
-    ret = asyncio.run(_run(v.portfolio_return, {"min_return": 0.02}))
-    assert "total return" in ret.reason
+def test_book_verifiers_refuse_to_grade_the_sample_book(offline, isolated_home):
+    """With no real fills the Ledger falls back to the bundled sample book, which
+    ships already up 5.6%. Grading a return goal against it would mark the goal
+    achieved before a single order was placed — a confident number about money
+    nobody has."""
+    import asyncio
+
+    v = load("verifiers")
+    for fn, args in ((v.portfolio_return, {"min_return": 0.01}), (v.max_drawdown, {"limit": 0.15})):
+        r = asyncio.run(_run(fn, args))
+        assert r.met is False
+        assert "sample" in r.reason, f"{fn.__name__} graded the demo book: {r.reason}"
+
+
+def test_book_verifiers_grade_a_real_book(offline, isolated_home):
+    """...and once real state exists they measure it."""
+    import asyncio
+    import json
+
+    load("store")
+    (isolated_home / "broker_paper.json").write_text(json.dumps(
+        {"cash": 110_000.0, "realized_pnl": 10_000.0, "positions": {}, "orders": [{"id": "1"}]}))
+    v = load("verifiers")
+    r = asyncio.run(_run(v.portfolio_return, {"min_return": 0.05}))
+    assert "total return" in r.reason, r.reason
+
+
+def test_sample_book_equity_is_never_recorded_as_a_metric(offline, isolated_home):
+    """The metric series has no demo flag, so anything written there reads as real
+    — including in the Overview sparkline and in max_drawdown's high-water mark."""
+    s = load("seams")
+    assert s.snapshot_equity({}) is None, "the sample book's equity must not be recorded"
 
 
 def test_stale_data_verifier_trips_on_the_snapshot(offline):
@@ -229,3 +257,71 @@ def test_skipped_seams_carry_a_rationale():
         if line.startswith("| `") and "| ⛔ |" in line:
             reason = line.strip("|").split("|")[2].strip()
             assert len(reason) > 40, f"thin rationale: {line[:80]}"
+
+
+def test_kill_switch_readout_agrees_with_the_gate(isolated_home, monkeypatch, tmp_path):
+    """The status tool must check every location the GATE checks.
+
+    v0.3.0 moved gate() to both locations and left the readout on one, so a halt
+    file in the host config dir stopped trading while the tool printed "clear".
+    Under-reporting protection on a safety surface is the wrong way to be wrong.
+    """
+    import re
+
+    # Strip comments first: the fix's own comment NAMES the old call to explain why
+    # it's gone, and a whole-file grep would forbid that. (Same trap as the
+    # `_live_config_dir` assertion in test_store.py.)
+    src = open(load("broker.tools").__file__).read()
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+    assert "_killswitch_path()" not in code, "readout checks fewer places than the gate"
+    assert re.search(r"store\.killswitch_engaged\(\)", code)
+
+    cfg = tmp_path / "hostcfg"
+    cfg.mkdir()
+    monkeypatch.setenv("PROTOAGENT_CONFIG_DIR", str(cfg))
+    (cfg / "TRADING_HALT").touch()
+    st = load("store")
+    engine = load("broker.engine")
+    assert st.killswitch_engaged() is not None
+    ok, why = engine.Mandate(enabled=True, mode="paper").gate()
+    assert ok is False and "KILL-SWITCH" in why
+
+
+def test_mandate_armed_fires_on_the_transition_only(registry, isolated_home):
+    """Declared in `emits:` and subscribed to, but v0.3.0 never emitted it — a
+    mandate is a file, so there is no code path that 'arms' one to hook."""
+    ev, engine = load("events"), load("broker.engine")
+    ev.bind(registry)
+    engine._last_armed = None
+
+    armed = engine.Mandate(enabled=True, mode="paper")
+    armed.gate()                                   # first observation = state, not a transition
+    assert registry.emitted == []
+    engine.Mandate(enabled=False).gate()           # armed -> disarmed
+    assert [t for t, _ in registry.emitted] == [ev.MANDATE_ARMED]
+    engine.Mandate(enabled=False).gate()           # no change, no repeat
+    assert len(registry.emitted) == 1
+
+
+def test_parity_doc_counts_match_its_own_tables():
+    """The v0.3.0 notes claimed '12 deliberately not used' against a table holding
+    19. Pin both numbers to the prose so the claim can't drift again."""
+    import re
+
+    text = (ROOT / "docs" / "sdk-parity.md").read_text()
+    claim = re.search(r"\*\*(\d+) seams adopted, (\d+) deliberately skipped\.\*\*", text)
+    assert claim, "the doc must state its own counts"
+    assert int(claim.group(1)) == text.count("| ✅ |")
+    assert int(claim.group(2)) == text.count("| ⛔ |")
+
+
+def test_a_failing_tool_factory_does_not_take_the_others(monkeypatch, registry):
+    """One loop meant a mid-loop raise aborted the group AFTER earlier factories
+    had registered — a partial toolset live, with the log reporting zero."""
+    import conftest
+
+    broken = load("factors.tools")
+    monkeypatch.setattr(broken, "get_factor_tools", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    conftest.plugin.register(registry)
+    names = {t.name for t in registry.tools}
+    assert "stock_quote" in names and "broker_place_order" in names, "unrelated tools were lost"

@@ -426,6 +426,7 @@ async function loadLedger() {
   loading($("lg-orders"));
   const d = await api(q("/ledger"));
   if (depsBanner(d)) return;
+  if (d.provenance) setProv(d.provenance);
   if (!d.ok) { $("lg-orders").innerHTML = `<div class="body"><div class="pl-empty">${esc(d.error)}</div></div>`; return; }
 
   const g = d.gate || {};

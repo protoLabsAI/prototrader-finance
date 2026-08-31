@@ -12,7 +12,8 @@ import logging
 
 from langchain_core.tools import tool
 
-from .engine import Mandate, PaperBroker, _killswitch_path, _mandate_path, quote
+from .. import store
+from .engine import Mandate, PaperBroker, _mandate_path, quote
 
 log = logging.getLogger("protoagent.plugins.broker")
 
@@ -70,7 +71,12 @@ async def broker_account() -> str:
             f"  per-order cap: ${m.max_order_usd:,.0f} | per-name: {m.max_position_pct:.0f}% | "
             f"gross: {m.max_gross_exposure_pct:.0f}% | daily: {m.daily_order_cap}",
             f"  approval required: {m.require_approval} | kill-switch: "
-            f"{'ENGAGED' if _killswitch_path().exists() else 'clear'}",
+            # store.killswitch_engaged(), NOT _killswitch_path().exists(): the gate
+            # honours BOTH the plugin store and the host config dir, and a readout
+            # that checks fewer places than the gate reports "clear" while trading
+            # is actually halted. On a safety surface that is the wrong direction
+            # to be wrong in.
+            f"{'ENGAGED' if store.killswitch_engaged() else 'clear'}",
         ]
         if not _mandate_path().exists():
             lines.append(f"\n  ⚠ No mandate file — create {_mandate_path()} to arm "

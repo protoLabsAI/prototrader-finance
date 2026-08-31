@@ -8,6 +8,10 @@ worse than useless: it would teach the wrong lesson. Every ✅ below has a real
 finance job. Every ⛔ has a standing rationale, so the next person doesn't spend
 an afternoon rediscovering why it doesn't fit.
 
+**15 seams adopted, 19 deliberately skipped.** A test pins those counts
+against this file, because the v0.3.0 release notes claimed "12 deliberately not
+used" when the table already held 19 — a number nobody had counted.
+
 The contract halves are: **contribution** (`PluginRegistry.register_*` — what the
 plugin adds) and **consumption** (`graph.sdk` — what it calls back into core).
 See `docs/reference/plugin-registry-api.md` and `plugin-sdk-api.md` in the host.

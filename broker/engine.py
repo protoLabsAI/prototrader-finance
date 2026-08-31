@@ -62,6 +62,24 @@ def _killswitch_path() -> Path:
 _CONFIG: dict = {}
 
 
+# Last armed state seen by `Mandate.gate`, so the transition can be broadcast
+# once rather than on every poll. None = not yet observed.
+_last_armed: bool | None = None
+
+
+def _note_armed(armed: bool) -> None:
+    """Emit `mandate_armed` when, and only when, the gate's answer changes."""
+    global _last_armed
+    if _last_armed == armed:
+        return
+    was, _last_armed = _last_armed, armed
+    if was is None:  # first observation is state, not a transition
+        return
+    from .. import events
+
+    events.emit(events.MANDATE_ARMED, enabled=armed, mode="paper")
+
+
 def set_config(config: dict | None) -> None:
     """Adopt the resolved plugin config (called from ``register``)."""
     global _CONFIG
@@ -102,8 +120,16 @@ class Mandate:
         return cls(**{k: v for k, v in raw.items() if k in known})
 
     def gate(self) -> tuple[bool, str]:
-        """Master gate independent of any single order."""
+        """Master gate independent of any single order.
+
+        Also the one place that knows the armed state, so it is where the
+        ``mandate_armed`` transition is broadcast from. The topic was declared in
+        the manifest and subscribed to, but nothing ever emitted it — a mandate is
+        a FILE an operator edits, so there is no code path that "arms" one to hook.
+        Watching the gate's own answer change is the honest substitute.
+        """
         if not self.enabled:
+            _note_armed(False)
             return False, ("trading is DISABLED — no mandate in effect. Configure "
                            f"{_mandate_path().name} (enabled: true) to arm the paper broker.")
         if self.mode != "paper":
@@ -113,6 +139,7 @@ class Mandate:
         if halt is not None:
             return False, (f"KILL-SWITCH engaged ({halt} present) — all trading halted. "
                            "Remove the file to resume.")
+        _note_armed(True)
         return True, "armed (paper)"
 
 

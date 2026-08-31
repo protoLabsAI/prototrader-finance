@@ -88,13 +88,21 @@ def compute_factor(close: pd.DataFrame, factor: str, vol: pd.DataFrame | None = 
 
 
 def evaluate(factor: str, universe: list[str] | None = None, period: str = "3y",
-             horizon: int = 21, step: int = 21) -> dict:
-    """IC-evaluate one factor across the universe. horizon/step in trading days."""
+             horizon: int = 21, step: int = 21, *, prefer: str = "live") -> dict:
+    """IC-evaluate one factor across the universe. horizon/step in trading days.
+
+    ``prefer`` is threaded down to the panel fetch. It exists because omitting it
+    was not a missing feature but a silent one: the dashboard asked for
+    ``prefer="cache"`` when fetching provenance, then called this, which defaulted
+    to ``"live"`` and issued 154 provider calls on a single paint — while the chip
+    on screen described the *other* fetch. A study whose numbers and whose
+    stated source come from different requests is worse than no chip at all.
+    """
     universe = universe or DEFAULT_UNIVERSE
     if (factor or "").lower() in ("volume_trend", "volume"):
-        close, vol = _vol_panel(universe, period)
+        close, vol = _vol_panel(universe, period, prefer=prefer)
     else:
-        close, vol = fetch_panel(universe, period), None
+        close, vol = fetch_panel(universe, period, prefer=prefer), None
     fac = compute_factor(close, factor, vol)
     fwd = close.shift(-horizon) / close - 1
 
@@ -134,12 +142,13 @@ def evaluate(factor: str, universe: list[str] | None = None, period: str = "3y",
     }
 
 
-def evaluate_all(universe: list[str] | None = None, period: str = "3y") -> list[dict]:
+def evaluate_all(universe: list[str] | None = None, period: str = "3y", *,
+                 prefer: str = "live") -> list[dict]:
     """Run every factor, sorted by |IR| (strongest first)."""
     out = []
     for name in FACTORS:
         try:
-            out.append(evaluate(name, universe, period))
+            out.append(evaluate(name, universe, period, prefer=prefer))
         except Exception as e:  # noqa: BLE001
             out.append({"factor": name, "error": str(e)})
     return sorted(out, key=lambda r: abs(r.get("ir", 0) or 0), reverse=True)

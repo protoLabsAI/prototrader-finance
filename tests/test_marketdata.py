@@ -198,3 +198,24 @@ def test_a_short_request_does_not_poison_a_long_one(isolated_home, monkeypatch):
     long = md.bars("FAKE", "5y", prefer="cache")
     assert long.source == "cache"
     assert len(long.frame) > 252, "the cache held the superset, so 5y is still answerable"
+
+
+def test_warm_skips_symbols_that_are_still_fresh(isolated_home, monkeypatch):
+    """Paints never go live, so the lifecycle warm is the only thing refreshing the
+    cache — but a laptop opened five times an hour must not refetch the universe
+    each time."""
+    md = load("marketdata")
+    fetched = []
+    monkeypatch.setattr(md, "_fetch_live", lambda s, *a, **k: fetched.append(s) or _frame())
+
+    assert md.warm(["A", "B"]) == 2
+    assert fetched == ["A", "B"]
+
+    fetched.clear()
+    assert md.warm(["A", "B"]) == 0, "a fresh cache must not be refetched"
+    assert fetched == []
+
+
+def test_warm_survives_a_dead_symbol(isolated_home, offline):
+    """One unreachable name must not stop the rest of the universe warming."""
+    assert offline.warm(["SPY", "NOSUCHTICKER"]) == 0  # offline: nothing refreshes, nothing raises

@@ -7,3 +7,9 @@ broker_paper.json
 broker_audit.jsonl
 broker_mandate.yaml
 .DS_Store
+
+# The plugin's own store, when it resolves to a cwd-relative `config/` because no
+# host is present (scripts/preview.py, bare pytest). v0.3.0 shipped 704 KB of this
+# cache to every installer — including a TRUNCATED QQQ frame that would have been
+# served as tier `cache`, i.e. worse data than the snapshot it overrode.
+config/

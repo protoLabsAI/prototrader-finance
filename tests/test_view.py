@@ -158,3 +158,59 @@ def test_ledger_normalizes_both_order_shapes(client, offline, isolated_home):
     assert o["price"] == 200.25, "engine fill_price must surface as price"
     assert o["fee"] == 0.2, "engine commission must surface as fee"
     assert o["notional"] == 2002.5
+
+
+# ── the offline promise, measured rather than asserted ───────────────────────
+
+def _count_live(monkeypatch, md):
+    """Record every provider call instead of making one."""
+    calls = []
+
+    def _boom(symbol, *a, **k):
+        calls.append(symbol)
+        raise RuntimeError("network disabled in tests")
+
+    monkeypatch.setattr(md, "_fetch_live", _boom)
+    return calls
+
+
+def test_a_default_paint_makes_zero_provider_calls(client, isolated_home, monkeypatch):
+    """"A dashboard paint never blocks on the network" — counted, not trusted.
+
+    v0.3.0 asserted this and broke it twice: /factors issued 154 live calls because
+    factors.evaluate() had no `prefer` parameter, and every pane went live-first on
+    a CLEAN INSTALL because prefer="cache" checked only the cache, never the seed.
+    A test that merely asserts `ok is True` passes in both cases — the fallback
+    still produces data, just after hammering a provider that isn't there.
+    """
+    md = load("marketdata")
+    for path in ("/universe", "/overview", "/ledger", "/factors", "/backtest?symbol=SPY&period=1y"):
+        calls = _count_live(monkeypatch, md)
+        d = client.get(GATED + path).json()
+        assert d["ok"] is True, (path, d)
+        assert calls == [], f"{path} made {len(calls)} provider calls on a default paint: {calls[:6]}"
+
+
+def test_refresh_is_the_only_thing_that_goes_live(client, isolated_home, monkeypatch):
+    """...and ?refresh=1 must still reach the provider, or Refresh is a lie."""
+    md = load("marketdata")
+    calls = _count_live(monkeypatch, md)
+    client.get(f"{GATED}/overview?refresh=1")
+    assert calls, "refresh=1 should attempt a live fetch"
+
+
+def test_every_data_pane_reports_its_provenance(client, offline):
+    """Each pane marks prices off the tiered path, so each owes the disclosure.
+    The Ledger shipped without one, leaving its marks under whatever chip the
+    Overview had last set."""
+    for path in ("/overview", "/factors", "/ledger"):
+        d = client.get(GATED + path).json()
+        assert d.get("provenance"), f"{path} returns no provenance"
+        assert d["provenance"]["source"] in ("live", "cache", "seed", "none")
+
+
+def test_the_page_sets_the_chip_from_every_pane(page_html):
+    """A payload carrying provenance the page never reads is the same bug."""
+    for loader in ("loadOverview", "loadBacktest", "loadFactors", "loadLedger"):
+        body = page_html.split(f"async function {loader}", 1)[1].split("\nasync function", 1)[0]
+        assert "setProv(" in body, f"{loader} never updates the provenance chip"

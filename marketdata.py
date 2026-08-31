@@ -231,8 +231,17 @@ def bars(
     sym = symbol.strip().upper()
     cached = _read_frame(_cache_path(sym, interval))
 
-    if prefer == "cache" and cached is not None:
-        return Bars(_slice(cached[0], period), sym, "cache", cached[1])
+    if prefer == "cache":
+        # Cache, then the bundled snapshot — and only then the network. Checking
+        # the cache alone was not enough: on a CLEAN INSTALL there is no cache, so
+        # every "don't block the paint" read fell through to a live fetch. That is
+        # exactly the state a first demo is in, so the one case the seed exists for
+        # was the one case it wasn't reached.
+        if cached is not None:
+            return Bars(_slice(cached[0], period), sym, "cache", cached[1])
+        seeded = _read_frame(_seed_path(sym))
+        if seeded is not None:
+            return Bars(_slice(seeded[0], period), sym, "seed", seeded[1])
 
     try:
         # Fetch the superset, cache it whole, hand back the requested slice.
@@ -258,6 +267,34 @@ def bars(
         f"no data for {sym!r} — live fetch failed and neither the cache nor the "
         f"bundled snapshot covers it. Seeded symbols: {', '.join(seed_universe()) or 'none'}"
     )
+
+
+def is_fresh(symbol: str, interval: str = "1d") -> bool:
+    """True when the cached frame is new enough that refetching would be waste."""
+    hit = _read_frame(_cache_path(symbol, interval))
+    return hit is not None and (time.time() - hit[1]) < CACHE_TTL_S
+
+
+def warm(symbols: list[str], period: str = CACHE_PERIOD) -> int:
+    """Refresh the cache for `symbols`, skipping any still-fresh. Returns the count.
+
+    Paints deliberately never go live, so without a warm a networked host would
+    keep serving the bundled snapshot until someone pressed Refresh. This is the
+    other half of that trade: fetch on the lifecycle events instead of on the paint.
+
+    Skipping fresh symbols is what keeps it from becoming a wake-storm — a laptop
+    opened five times an hour would otherwise refetch the whole universe each time.
+    """
+    n = 0
+    for sym in symbols:
+        if is_fresh(sym):
+            continue
+        try:
+            if bars(sym, period, prefer="live").source == "live":
+                n += 1
+        except Exception:
+            continue
+    return n
 
 
 def panel(
