@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import importlib.util
+from conftest import load
 
 
 def _engine():
-    spec = importlib.util.spec_from_file_location(
-        "beh_engine", "behavioral/engine.py",
-        submodule_search_locations=["behavioral"],
-    )
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    return load("behavioral.engine")
 
 
 # Classic trap: high win rate, but small quick wins and big slow losses.

@@ -17,6 +17,9 @@ enabled: false
 
 # Deps are declared, NOT auto-installed (ADR 0027 D4) — `plugin install-deps
 # prototrader-finance`, or `pip install -r requirements-finance.txt` in the fork.
+# yfinance/ccxt are for LIVE data only. Without them the plugin still loads and
+# every view still renders — off the bundled snapshot in `seed/` — so a failed
+# dep install degrades the plugin instead of breaking it.
 requires_pip:
   - yfinance>=0.2.40
   - ccxt>=4.3
@@ -24,6 +27,8 @@ requires_pip:
   - numpy>=1.26
 
 repository: https://github.com/protoLabsAI/prototrader-finance
+homepage: https://github.com/protoLabsAI/prototrader-finance#readme
+guide_url: "https://github.com/protoLabsAI/prototrader-finance#install"   # Settings "Setup guide" link (ADR 0059)
 min_protoagent_version: "0.21.0"
 
 # Declarative (surfaced for review, not enforced): reaches market-data hosts;

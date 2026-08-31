@@ -1,0 +1,17 @@
+# Test-only deps. Deliberately does NOT include yfinance/ccxt: the suite never
+# touches a provider (the `offline` fixture makes live calls raise), so CI stays
+# fast and a network flake can never turn the build red.
+#
+# pandas/numpy are here because the host provides them at runtime but a bare CI
+# venv does not. `import graph` must NOT be satisfiable — that's the host-free
+# guarantee this file encodes.
+pandas>=2
+numpy>=1.26
+pytest>=8
+ruff>=0.6
+
+# Needed to import the plugin's own modules (the host provides both at runtime):
+# `@tool` decorators and the FastAPI routers `register()` builds.
+langchain-core>=0.3
+fastapi>=0.110
+pyyaml>=6

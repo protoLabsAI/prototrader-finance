@@ -36,32 +36,36 @@ FACTORS = {
 }
 
 
-def fetch_panel(tickers: list[str], period: str = "3y") -> pd.DataFrame:
-    """Adjusted close panel (rows = dates, cols = tickers) via a batched download."""
-    try:
-        import yfinance as yf
-    except ImportError as e:  # pragma: no cover
-        raise RuntimeError("install requirements-finance.txt (yfinance)") from e
-    data = yf.download(tickers, period=period, interval="1d",
-                       auto_adjust=True, progress=False, group_by="column")
-    if data is None or len(data) == 0:
-        raise RuntimeError("no data for the universe")
-    close = data["Close"] if "Close" in data else data
-    if isinstance(close, pd.Series):
-        close = close.to_frame(tickers[0])
-    return close.dropna(how="all").ffill()
+def fetch_panel(tickers: list[str], period: str = "3y", *, prefer: str = "live") -> pd.DataFrame:
+    """Adjusted close panel (rows = dates, cols = tickers)."""
+    return fetch_panel_meta(tickers, period, prefer=prefer)[0]
 
 
-def _vol_panel(tickers: list[str], period: str = "3y"):
-    """Close panel + a volume panel (for volume_trend)."""
-    import yfinance as yf
-    data = yf.download(tickers, period=period, interval="1d",
-                       auto_adjust=True, progress=False, group_by="column")
-    close = data["Close"] if "Close" in data else data
-    vol = data["Volume"] if "Volume" in data else None
-    if isinstance(close, pd.Series):
-        close = close.to_frame(tickers[0])
-    return close.dropna(how="all").ffill(), (vol.ffill() if vol is not None else None)
+def fetch_panel_meta(tickers: list[str], period: str = "3y", *, prefer: str = "live"):
+    """Close panel + per-symbol provenance — one symbol failing drops a column,
+    not the study (:func:`marketdata.panel`)."""
+    from .. import marketdata
+
+    return marketdata.panel(tickers, period, prefer=prefer)
+
+
+def _vol_panel(tickers: list[str], period: str = "3y", *, prefer: str = "live"):
+    """Close panel + a volume panel (for volume_trend).
+
+    Volume comes from the same cached/seeded OHLCV frames as close, so a
+    volume-based factor degrades exactly like a price-based one.
+    """
+    from .. import marketdata
+
+    close, _ = marketdata.panel(tickers, period, prefer=prefer)
+    vols = {}
+    for t in close.columns:
+        try:
+            vols[t] = marketdata.bars(t, period, prefer="cache").frame["Volume"]
+        except Exception:
+            continue
+    vol = pd.DataFrame(vols).reindex(close.index).ffill() if vols else None
+    return close, vol
 
 
 def compute_factor(close: pd.DataFrame, factor: str, vol: pd.DataFrame | None = None) -> pd.DataFrame:

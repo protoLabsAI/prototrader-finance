@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import importlib.util
+from conftest import load
 
 import numpy as np
 import pandas as pd
@@ -10,13 +10,7 @@ import pytest
 
 
 def _engine():
-    spec = importlib.util.spec_from_file_location(
-        "bt_engine", "backtest/engine.py",
-        submodule_search_locations=["backtest"],
-    )
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+    return load("backtest.engine")
 
 
 def _synth(n=400, seed=1):

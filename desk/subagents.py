@@ -11,7 +11,11 @@ globally; a subagent only sees what's listed here.
 
 from __future__ import annotations
 
-from graph.subagents.config import SubagentConfig
+# NOTE: `graph.subagents.config.SubagentConfig` is a HOST import and stays out of
+# module scope on purpose. Specs below are plain dicts; `desk_subagents()` binds
+# them to the host type. That keeps this module importable with no protoAgent
+# present, which is what lets the suite smoke-test `register()` at all — a
+# top-level host import here would make the whole plugin untestable host-free.
 
 _RESEARCH_TOOLS = [
     "stock_quote", "stock_price_history", "stock_fundamentals",
@@ -19,7 +23,7 @@ _RESEARCH_TOOLS = [
     "web_search", "fetch_url", "memory_recall", "memory_ingest", "current_time",
 ]
 
-MARKET_ANALYST = SubagentConfig(
+MARKET_ANALYST = dict(
     name="market-analyst",
     description=(
         "Researches one instrument or market — price/trend, fundamentals (equities), "
@@ -53,7 +57,7 @@ argue that side hard but stay factual.""",
     model="protolabs/fast",
 )
 
-QUANT = SubagentConfig(
+QUANT = dict(
     name="quant",
     description=(
         "Tests trading ideas empirically — backtests strategies and (later) "
@@ -96,7 +100,7 @@ you say so.""",
     max_turns=24,
 )
 
-RISK_MANAGER = SubagentConfig(
+RISK_MANAGER = dict(
     name="risk-manager",
     description=(
         "Stress-tests a thesis, position, or strategy — drawdown, tail risk, "
@@ -126,5 +130,15 @@ the call. Be concrete and conservative.""",
 )
 
 
-def desk_subagents() -> list[SubagentConfig]:
-    return [MARKET_ANALYST, QUANT, RISK_MANAGER]
+def desk_subagents() -> list:
+    """The research desk, as host ``SubagentConfig`` objects.
+
+    The host import lives here rather than at module scope — see the note at the
+    top of this file.
+    """
+    from graph.subagents.config import SubagentConfig
+
+    return [SubagentConfig(**spec) for spec in DESK_SPECS]
+
+
+DESK_SPECS = [MARKET_ANALYST, QUANT, RISK_MANAGER]

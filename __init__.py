@@ -40,6 +40,12 @@ def register(registry) -> None:
     from .desk.subagents import desk_subagents
     from .factors.tools import get_factor_tools
 
+    # The paper broker resolves its mandate path from the plugin config
+    # (`broker_mandate_path`), so hand it the resolved section before any tool runs.
+    from .broker import engine as broker_engine
+
+    broker_engine.set_config(registry.config)
+
     # Tools — market data → backtest → factors → behavioral → gated paper broker.
     n_tools = 0
     for factory in (
@@ -54,10 +60,15 @@ def register(registry) -> None:
         n_tools += len(tools)
 
     # Subagents — the research desk the workflows compose and the lead delegates to.
+    # Wrapped like every other group: a plugin that half-loads with a logged error
+    # is strictly better than one whose tools vanish because a subagent spec broke.
     n_subagents = 0
-    for cfg in desk_subagents():
-        registry.register_subagent(cfg)
-        n_subagents += 1
+    try:
+        for cfg in desk_subagents():
+            registry.register_subagent(cfg)
+            n_subagents += 1
+    except Exception:
+        log.exception("[prototrader-finance] desk subagents failed to register")
 
     # Console view (ADR 0026) — TWO routers at DISTINCT prefixes: the PAGE stays
     # on the public /plugins/prototrader-finance (an iframe page-load can't carry

@@ -1,0 +1,28 @@
+{
+  "source": "Yahoo Finance via yfinance",
+  "fetched_at": 1788215817.6447518,
+  "fetched_at_iso": "2026-08-31T22:36:57.644752+00:00",
+  "period": "5y",
+  "interval": "1d",
+  "symbols": [
+    "AAPL",
+    "AMZN",
+    "AVGO",
+    "BTC-USD",
+    "ETH-USD",
+    "GOOGL",
+    "JNJ",
+    "JPM",
+    "LLY",
+    "META",
+    "MSFT",
+    "NVDA",
+    "QQQ",
+    "SPY",
+    "TSLA",
+    "UNH",
+    "WMT",
+    "XOM"
+  ],
+  "note": "Real historical bars, snapshotted for offline demos. NOT live data \u2014 the dashboard labels anything served from here as a bundled snapshot with its age. Regenerate with scripts/refresh_seed.py."
+}

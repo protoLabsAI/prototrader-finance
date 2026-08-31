@@ -6,21 +6,13 @@ gate and live quotes live in tools.py and are exercised separately (live).
 
 from __future__ import annotations
 
-import importlib.util
+from conftest import load
 
 
 def _engine(tmp_path, monkeypatch):
-    import sys
-    spec = importlib.util.spec_from_file_location(
-        "brk_engine", "broker/engine.py",
-        submodule_search_locations=["broker"],
-    )
-    m = importlib.util.module_from_spec(spec)
-    sys.modules["brk_engine"] = m  # dataclasses resolve cls.__module__ here
-    spec.loader.exec_module(m)
-    # Redirect all broker files into a temp config dir.
-    monkeypatch.setattr(m, "_config_dir", lambda: tmp_path)
-    return m
+    # The `isolated_home` autouse fixture already points store.home() at a tmp dir,
+    # so the engine's real path resolution runs — no monkeypatched _config_dir.
+    return load("broker.engine")
 
 
 def _armed(m, **over):
@@ -43,9 +35,24 @@ def test_live_mode_refused(tmp_path, monkeypatch):
     assert ok is False and "paper-only" in why
 
 
-def test_killswitch_halts(tmp_path, monkeypatch):
+def test_killswitch_halts(tmp_path, monkeypatch, isolated_home):
     m = _engine(tmp_path, monkeypatch)
-    (tmp_path / "TRADING_HALT").write_text("halt")
+    (isolated_home / "TRADING_HALT").write_text("halt")
+    ok, why = _armed(m).gate()
+    assert ok is False and "KILL-SWITCH" in why
+
+
+def test_killswitch_honoured_in_host_config_dir_too(tmp_path, monkeypatch):
+    """A halt file dropped in the HOST config dir must halt as well.
+
+    An operator reaching for the kill-switch is having a bad day; if they put it
+    where the old release read it, the answer has to be "stopped", not "kept
+    trading, wrong directory"."""
+    m = _engine(tmp_path, monkeypatch)
+    cfg = tmp_path / "hostcfg"
+    cfg.mkdir()
+    monkeypatch.setenv("PROTOAGENT_CONFIG_DIR", str(cfg))
+    (cfg / "TRADING_HALT").write_text("halt")
     ok, why = _armed(m).gate()
     assert ok is False and "KILL-SWITCH" in why
 
@@ -102,14 +109,14 @@ def test_daily_cap(tmp_path, monkeypatch):
     assert ok is False and "daily order cap" in why
 
 
-def test_state_persists(tmp_path, monkeypatch):
+def test_state_persists(tmp_path, monkeypatch, isolated_home):
     m = _engine(tmp_path, monkeypatch)
     b = m.PaperBroker(_armed(m))
     b.fill("AAPL", "buy", 10, 180.0, "market")
     b2 = m.PaperBroker(_armed(m))  # reload from disk
     assert b2.state.positions["AAPL"]["qty"] == 10
-    # Audit ledger was written.
-    assert (tmp_path / "broker_audit.jsonl").exists()
+    # Audit ledger was written — into the plugin's OWN store, not the host config dir.
+    assert (isolated_home / "broker_audit.jsonl").exists()
 
 
 def test_validate_marks_held_positions_at_market(tmp_path, monkeypatch):
