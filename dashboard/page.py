@@ -293,9 +293,24 @@ function stats(el, cells) {
 let REFRESH = 0;
 const q = (p) => p + (REFRESH ? (p.includes("?") ? "&" : "?") + "refresh=1" : "");
 
+function depsBanner(d) {
+  // A missing optional dependency has one known fix. Repeating a stack-trace-ish
+  // string in four panels buries it; one banner with the command doesn't.
+  if (!d || !d.needs_deps) return false;
+  document.querySelectorAll(".pane").forEach(p => {
+    if (p.id !== "pane-overview") p.innerHTML = "";
+  });
+  $("ov-stats").innerHTML = ""; $("ov-pos").innerHTML = ""; $("ov-mkt").innerHTML = "";
+  $("ov-equity").innerHTML = "";
+  $("ov-demo").innerHTML = `<div class="pl-callout pl-callout--warning"><div class="pl-callout__body">
+    <b>Market-data stack not installed.</b> ${esc(d.error)}</div></div>`;
+  return true;
+}
+
 async function loadOverview() {
   loading($("ov-pos")); loading($("ov-mkt"));
   const d = await api(q("/overview"));
+  if (depsBanner(d)) return;
   if (!d.ok) { $("ov-pos").innerHTML = `<div class="body"><div class="pl-empty">${esc(d.error)}</div></div>`; return; }
   setProv(d.provenance);
   const p = d.portfolio;
@@ -348,6 +363,7 @@ async function loadBacktest(ev) {
     .catch(e => ({ ok: false, error: String(e) }));
   $("bt-run").disabled = false;
 
+  if (depsBanner(d)) return;
   if (!d.ok) {
     $("bt-err").querySelector(".pl-callout__body").textContent = "Backtest unavailable — " + d.error;
     $("bt-err").hidden = false;
@@ -371,6 +387,7 @@ async function loadBacktest(ev) {
 async function loadFactors() {
   loading($("fx-table"));
   const d = await api(q("/factors"));
+  if (depsBanner(d)) return;
   if (!d.ok) { $("fx-table").innerHTML = `<div class="body"><div class="pl-empty">${esc(d.error)}</div></div>`; return; }
   setProv(d.provenance);
 
@@ -408,6 +425,7 @@ async function loadFactors() {
 async function loadLedger() {
   loading($("lg-orders"));
   const d = await api(q("/ledger"));
+  if (depsBanner(d)) return;
   if (!d.ok) { $("lg-orders").innerHTML = `<div class="body"><div class="pl-empty">${esc(d.error)}</div></div>`; return; }
 
   const g = d.gate || {};

@@ -304,6 +304,11 @@ def arm_tripwires(config: dict | None) -> int:
 def build_test_router(config: dict | None):
     """``POST /api/config/test-prototrader_finance`` — the Settings "Test connection".
 
+    The full path lives on the ROUTE and the router registers with ``prefix=""``,
+    matching core's own chat-surface wirer. Registering it under ``prefix="/api"``
+    works but trips the registry's "routes SHOULD live under /plugins/<id>/"
+    warning on every boot — and an empty prefix is the case that check skips.
+
     Reports which data tier is actually reachable. That is the single most useful
     thing to know before a demo, and the answer "the snapshot, because the
     provider is unreachable" is a *pass* with a caveat rather than a failure —
@@ -314,9 +319,14 @@ def build_test_router(config: dict | None):
 
     router = APIRouter()
 
-    @router.post("/config/test-prototrader_finance")
+    @router.post("/api/config/test-prototrader_finance")
     async def _test():
-        from . import marketdata
+        try:
+            from . import marketdata
+        except ImportError as e:
+            return JSONResponse({"ok": False, "detail": (
+                f"the market-data stack isn't installed ({e.name or e}). Run "
+                "`python -m server plugin install-deps prototrader-finance`, then restart.")})
 
         symbol = ((config or {}).get("default_benchmark") or "SPY").upper()
         try:

@@ -45,6 +45,10 @@ def _clear_memo() -> None:
 
 
 def _err(exc: Exception) -> dict:
+    """A failure the page can render. A missing dependency is an *expected* state
+    with a known fix, so it reports the fix rather than a class name."""
+    if isinstance(exc, DepsMissing):
+        return {"ok": False, "error": str(exc), "needs_deps": True}
     return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
@@ -55,13 +59,38 @@ def _round(x, n=4):
         return None
 
 
+class DepsMissing(RuntimeError):
+    """The optional market-data stack isn't installed."""
+
+
+def _deps():
+    """Import the pandas-backed modules, or raise a message an operator can act on.
+
+    Deliberately NOT imported at router-BUILD time. `requires_pip` is declared, not
+    auto-installed (ADR 0027 D4), so a perfectly normal install has no pandas — and
+    an ImportError while building the router killed the whole router group. The rail
+    icon still appeared, the page still loaded, and every panel failed to fetch: a
+    broken feature with nothing useful anywhere to say why.
+
+    Now the router always mounts and each endpoint answers with the fix.
+    """
+    try:
+        from .. import marketdata
+        from ..broker import engine as broker
+
+        return marketdata, broker
+    except ImportError as e:
+        raise DepsMissing(
+            f"the market-data stack isn't installed ({e.name or e}). Run: "
+            "`python -m server plugin install-deps prototrader-finance` "
+            "(installs pandas/numpy/yfinance/ccxt), then restart."
+        ) from e
+
+
 def build_data_router(config: dict | None):
     """The gated data routes. See module docstring for the two invariants."""
     from fastapi import APIRouter
     from fastapi.responses import JSONResponse
-
-    from .. import marketdata
-    from ..broker import engine as broker
 
     router = APIRouter()
     cfg = config or {}
@@ -79,6 +108,10 @@ def build_data_router(config: dict | None):
     @router.get("/universe")
     async def _universe():
         """What the bundled snapshot covers, and how old it is."""
+        try:
+            marketdata, _ = _deps()
+        except DepsMissing as e:
+            return JSONResponse(_err(e))
         m = marketdata.seed_manifest()
         return JSONResponse(
             {
@@ -102,12 +135,17 @@ def build_data_router(config: dict | None):
         try:
             if refresh:
                 _clear_memo()
+            _deps()
             return JSONResponse(_memo(f"overview:{refresh}", lambda: _build_overview(_prefer(refresh))))
+        except DepsMissing as e:
+            log.warning("[prototrader-finance] overview: %s", e)
+            return JSONResponse(_err(e))
         except Exception as e:
             log.exception("[prototrader-finance] overview failed")
             return JSONResponse(_err(e))
 
     def _build_overview(prefer: str) -> dict:
+        marketdata, broker = _deps()
         book = _load_book(broker, cfg)
         marks, rows, sources = {}, [], set()
 
@@ -176,6 +214,7 @@ def build_data_router(config: dict | None):
         if strategy not in STRATEGIES:
             return JSONResponse({"ok": False, "error": f"unknown strategy {strategy!r}"})
         try:
+            _deps()
             from ..backtest import engine
 
             bars = engine.fetch_bars(symbol, period=period, prefer=_prefer(refresh))
@@ -202,6 +241,9 @@ def build_data_router(config: dict | None):
                     "provenance": bars.to_meta(),
                 }
             )
+        except DepsMissing as e:
+            log.warning("[prototrader-finance] backtest: %s", e)
+            return JSONResponse(_err(e))
         except Exception as e:
             log.exception("[prototrader-finance] backtest failed")
             return JSONResponse(_err(e))
@@ -214,14 +256,19 @@ def build_data_router(config: dict | None):
         try:
             if refresh:
                 _clear_memo()
+            _deps()
             return JSONResponse(
                 _memo(f"factors:{period}:{refresh}", lambda: _build_factors(period, _prefer(refresh)), ttl=120.0)
             )
+        except DepsMissing as e:
+            log.warning("[prototrader-finance] factor study: %s", e)
+            return JSONResponse(_err(e))
         except Exception as e:
             log.exception("[prototrader-finance] factor study failed")
             return JSONResponse(_err(e))
 
     def _build_factors(period: str, prefer: str) -> dict:
+        marketdata, _ = _deps()
         from ..factors import engine as fe
 
         universe = marketdata.seed_universe() or fe.DEFAULT_UNIVERSE
@@ -261,6 +308,7 @@ def build_data_router(config: dict | None):
     async def _ledger(refresh: int = 0):
         """The paper book: gate status, positions, and the fill history."""
         try:
+            marketdata, broker = _deps()
             book = _load_book(broker, cfg)
             marks = {}
             for sym in book["positions"]:
@@ -282,6 +330,9 @@ def build_data_router(config: dict | None):
                     "orders": _order_rows(book["orders"])[:100],
                 }
             )
+        except DepsMissing as e:
+            log.warning("[prototrader-finance] ledger: %s", e)
+            return JSONResponse(_err(e))
         except Exception as e:
             log.exception("[prototrader-finance] ledger failed")
             return JSONResponse(_err(e))

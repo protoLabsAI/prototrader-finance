@@ -157,6 +157,10 @@ def test_test_connection_route_matches_the_config_section(registered, manifest):
     assert manifest["test"] is True
     served = {f"{p or ''}{r.path}" for p, router in registered.routers for r in router.routes}
     assert f"/api/config/test-{manifest['config_section']}" in served
+    # Registered with an EMPTY prefix, not "/api": a non-conforming prefix logs a
+    # registry warning on every boot, and "" is the case that check skips.
+    prefixes = [p for p, _ in registered.routers]
+    assert "" in prefixes and "/api" not in prefixes
 
 
 def test_seams_never_hard_fail_without_a_host(registered):

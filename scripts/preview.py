@@ -50,7 +50,7 @@ def build_app(config: dict | None = None):
     # (or the reverse), which defeats the point of previewing.
     app.include_router(dash.build_dashboard_router(config), prefix="/plugins/prototrader-finance")
     app.include_router(dash.build_data_router(config), prefix=PREFIX)
-    app.include_router(seams.build_test_router(config), prefix="/api")
+    app.include_router(seams.build_test_router(config), prefix="")
 
     ds = Path(os.environ.get("PROTOAGENT_REPO", "~/dev/protoAgent")).expanduser() / "apps/web/public/_ds"
     if ds.is_dir():

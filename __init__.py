@@ -84,16 +84,21 @@ def register(registry) -> None:
     group("subagents", _subagents)
 
     # ── console view: PAGE public, DATA gated (plugin-view rules 1 + 2) ───────
-    def _routers():
-        registry.register_router(build_dashboard_router(registry.config))
+    # Three SEPARATE groups on purpose. Bundled, one router raising took the other
+    # two with it — and the way that showed up was a rail icon whose every panel
+    # failed to fetch, with the actual cause logged once at load and nowhere near
+    # the symptom.
+    group("page_router", lambda: (
+        registry.register_router(build_dashboard_router(registry.config)) or 1))
+    group("data_router", lambda: (
         registry.register_router(build_data_router(registry.config),
-                                 prefix="/api/plugins/prototrader-finance")
-        # ADR 0029 "Test connection" — mounted on /api, not the plugin prefix,
-        # because the console looks for /api/config/test-<config_section>.
-        registry.register_router(seams.build_test_router(registry.config), prefix="/api")
-        return 3
-
-    group("routers", _routers)
+                                 prefix="/api/plugins/prototrader-finance") or 1))
+    # ADR 0029 "Test connection" — the console looks for the exact convention path
+    # /api/config/test-<config_section>, so the route carries the full path and the
+    # router registers with an empty prefix (the same shape core's chat-surface
+    # wirer uses, and the one case the prefix-conformance warning skips).
+    group("test_router", lambda: (
+        registry.register_router(seams.build_test_router(registry.config), prefix="") or 1))
 
     # ── chat command: user-only, deliberately NOT an agent tool ──────────────
     group("chat_command", lambda: (

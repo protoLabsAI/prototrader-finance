@@ -1,6 +1,12 @@
-# Runtime deps for the protoTrader Finance plugin (declared in the manifest as
-# requires_pip). The host protoAgent already provides pandas/numpy via its core;
-# yfinance + ccxt are the finance-specific additions.
+# Runtime deps for the protoTrader Finance plugin, mirroring the manifest's
+# `requires_pip`. Declared, NOT auto-installed (ADR 0027 D4):
+#
+#   python -m server plugin install-deps prototrader-finance
+#
+# The host does NOT ship pandas/numpy — an earlier version of this file claimed it
+# did, which is why a normal install could leave the dashboard's data routes dead.
+# Without these the plugin still LOADS and its tools still register; the views and
+# the compute tools report the install command instead of failing silently.
 yfinance>=0.2.40
 ccxt>=4.3
 pandas>=2
