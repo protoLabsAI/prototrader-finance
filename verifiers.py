@@ -26,53 +26,26 @@ def _result(met: bool, reason: str, evidence: str = ""):
     return VerifyResult(met=met, reason=reason, evidence=evidence)
 
 
-def _book(config: dict | None = None) -> dict:
-    from .broker import engine as broker
-    from .dashboard.api import _load_book
-
-    return _load_book(broker, config or {})
-
-
-class DemoBook(RuntimeError):
-    """No real paper book exists — only the bundled sample."""
-
-
 def _equity_and_peak(config: dict | None = None) -> tuple[float, float, float]:
-    """(equity, starting_cash, peak) — peak from the recorded metric series.
+    """(equity, starting_cash, peak) for the REAL book — raises on the sample.
 
-    Drawdown needs a high-water mark, which a point-in-time verifier can't know.
-    ``sdk.metric_history`` is that memory; without it every plugin hand-rolls a
-    JSON file for the same three numbers.
+    Peak comes from the recorded metric series: drawdown needs a high-water mark,
+    which a point-in-time verifier cannot know. `sdk.metric_history` is that
+    memory; without it every plugin hand-rolls a JSON file for the same numbers.
     """
-    from . import marketdata
+    from . import book as book_mod
 
-    book = _book(config)
-    if book.get("demo"):
-        # A verifier's whole job is ground truth. Grading "get the book to +10%"
-        # against a book that was shipped in the repo, already up 5.6%, would hand
-        # back a confident number about money nobody has — and a goal could be
-        # marked achieved before a single order was ever placed.
-        raise DemoBook(
-            "no real paper book yet — the Ledger is showing the bundled sample. "
-            "Arm a mandate and place a paper order before setting a return goal."
-        )
-    marks = {}
-    for sym in book["positions"]:
-        try:
-            marks[sym] = float(marketdata.bars(sym, "1mo", prefer="cache").frame["Close"].iloc[-1])
-        except Exception:
-            continue
-    equity = book["cash"] + sum(
-        p["qty"] * marks.get(s, p["avg_price"]) for s, p in book["positions"].items()
-    )
-    start = float(book.get("starting_cash") or 0.0) or equity
+    b = book_mod.load(config).require_real()
+    marks, _ = book_mod.marks_for(b)
+    equity = b.equity(marks)
+    start = b.starting_cash or equity
 
     peak = equity
     try:
         from graph import sdk
 
         hist = sdk.metric_history("equity", plugin_id="prototrader-finance") or []
-        vals = [float(v) for _, v in hist] if hist and isinstance(hist[0], (list, tuple)) else []
+        vals = [float(v) for _, v in hist]
         if vals:
             peak = max(max(vals), equity)
     except Exception:
@@ -86,10 +59,12 @@ async def portfolio_return(spec: dict, ctx) -> object:
     ``{"type": "plugin", "check": "prototrader-finance:portfolio_return",
        "args": {"min_return": 0.10}}``
     """
+    from . import book as book_mod
+
     target = float((spec.get("args") or {}).get("min_return", 0.10))
     try:
         equity, start, _ = _equity_and_peak()
-    except DemoBook as e:
+    except book_mod.SampleBookError as e:
         return _result(False, str(e))
     except Exception as e:
         return _result(False, f"could not value the book: {e}")
@@ -109,10 +84,12 @@ async def max_drawdown(spec: dict, ctx) -> object:
     "Met" is deliberately the bad outcome: a watch fires on met, and the thing
     worth waking the agent for is the breach, not the calm.
     """
+    from . import book as book_mod
+
     limit = abs(float((spec.get("args") or {}).get("limit", 0.15)))
     try:
         equity, _, peak = _equity_and_peak()
-    except DemoBook as e:
+    except book_mod.SampleBookError as e:
         return _result(False, str(e))
     except Exception as e:
         return _result(False, f"could not value the book: {e}")

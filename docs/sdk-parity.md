@@ -22,7 +22,7 @@ See `docs/reference/plugin-registry-api.md` and `plugin-sdk-api.md` in the host.
 |---|---|---|
 | `register_tools` | ✅ | 13 tools: market data, backtest, factor IC, behavioural journal, gated paper broker. |
 | `register_subagent` | ✅ | The research desk — `market-analyst`, `quant`, `risk-manager` — that the lead delegates to via `task()` and the workflows compose. |
-| `register_router` | ✅ | Three: the public view **page**, the gated **data** API, and the ADR 0029 connection test on `/api/config/`. |
+| `register_router` | ✅ | Three: the public view **page**, the gated **data** API, and the ADR 0029 connection test. Each is handed `live_config` rather than the register-time snapshot, so a Settings edit takes effect without a restart (FastAPI cannot re-mount a router). |
 | `register_chat_command` | ✅ | `/quant <SYMBOL> [strategy] [period]` — a desk read in chat. Registered as a command, not a tool, precisely because the seam is **not** model-invokable: it's the operator's shortcut, and the agent already has the same engines. |
 | `register_goal_verifier` | ✅ | 5. `portfolio_return` grounds "get the book to +10%" in the actual book; `max_drawdown` / `trading_halted` / `data_is_stale` are tripwires; `factor_alive` re-checks a factor's IC. Without these a finance goal is graded on the model's own account of its work. |
 | `register_watch_hook` | ✅ | `on_met` turns a tripped tripwire into a bus event; `on_stalled` distinguishes "evidence stopped moving" from "verifier broke" — for `data_is_stale` the stall *is* the signal. |
@@ -48,7 +48,7 @@ See `docs/reference/plugin-registry-api.md` and `plugin-sdk-api.md` in the host.
 |---|---|---|
 | `plugin_store` | ✅ | Every durable byte — paper book, audit ledger, price cache — via `store.py`. Replaces v0.1.0's private `graph.config_io._live_config_dir` import (see that module's docstring for how that failed silently). |
 | `record_metric` / `metric_history` | ✅ | The equity series. Drawdown needs a high-water mark and the dashboard wants a trend, both of which need *prior* values that a point-in-time payload can't have. |
-| `knowledge_add` | ✅ | A completed backtest becomes a retrievable fact, so "how did ma_cross do on NVDA" doesn't mean re-running it. |
+| `knowledge_add` | ✅ | Every completed backtest — from the dashboard and from `/quant` — becomes a retrievable fact carrying the data tier it used, so "how did ma_cross do on NVDA" doesn't mean re-running it. (A test now gates this table too: v0.3.0 marked this ✅ while the writer had zero callers.) |
 | `create_watch` | ✅ | Standing tripwires with stable ids (so a reload replaces rather than duplicates), armed **only when the broker is armed** — watching the drawdown of a book that can't trade is noise. |
 | `metric_last`, `list_watches`, `clear_watch` | ⛔ | Available and unneeded: the tripwires are a fixed set with fixed ids, so there's nothing to enumerate or revoke dynamically. |
 | `run_subagent` | ⛔ | The desk subagents are *registered*, and the lead delegates through `task()`. Calling `run_subagent` from a tool would bypass the tool fences the desk's allowlists exist to enforce. |

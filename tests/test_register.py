@@ -121,3 +121,27 @@ def test_seed_manifest_matches_declared_universe():
     on_disk = json.loads((md.SEED_DIR / "MANIFEST.json").read_text())
     assert on_disk["symbols"] == sorted(on_disk["symbols"])
     assert on_disk["source"] and on_disk["fetched_at_iso"]
+
+
+def test_dep_tiers_and_scopes_are_declared_the_way_the_host_parses_them(manifest):
+    """`optional_pip` and `pip_scopes` are DERIVED from `requires_pip` mapping
+    entries — they are not top-level keys. Written as top-level lists (the obvious
+    guess) they parse to empty and the declaration silently does nothing.
+
+    Both tiers matter here: yfinance/ccxt are optional because every view still
+    renders off the bundled snapshot without them, and all four are `scope: host`
+    because this plugin imports them IN-PROCESS. The default scope is the managed
+    runtime, whose site-packages is separate — that combination passes the frozen
+    install gate and then dies at every tool call.
+    """
+    assert "optional_pip" not in manifest and "pip_scopes" not in manifest, \
+        "these are derived from requires_pip entries, not top-level keys"
+
+    entries = manifest["requires_pip"]
+    assert all(isinstance(e, dict) and e.get("pkg") for e in entries)
+    by_pkg = {e["pkg"].split(">")[0].split("=")[0]: e for e in entries}
+    assert by_pkg["yfinance"].get("optional") is True
+    assert by_pkg["ccxt"].get("optional") is True
+    assert by_pkg["pandas"].get("optional") is not True, "pandas is hard — routes need it"
+    for pkg, e in by_pkg.items():
+        assert e.get("scope") == "host", f"{pkg} is imported in-process, so scope must be host"

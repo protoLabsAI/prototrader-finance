@@ -1,6 +1,6 @@
 [project]
 name = "prototrader-finance"
-version = "0.3.1"
+version = "0.4.0"
 description = "protoTrader Finance — a full-bundle protoAgent plugin (market data, backtest, factors, behavioral, gated paper broker, the research desk, workflows, and a Quant Desk dashboard view)"
 requires-python = ">=3.11"
 

@@ -36,8 +36,8 @@ def test_emitted_topics_match_the_manifest(manifest):
 
 
 def test_subscriptions_are_declared_and_namespaced(registered, manifest):
-    assert set(registered.subscriptions) == set(manifest["subscribes"])
-    for topic in registered.subscriptions:
+    assert set(registered.handlers) == set(manifest["subscribes"])
+    for topic in registered.handlers:
         assert topic.startswith("prototrader-finance.")
 
 
@@ -50,15 +50,21 @@ def test_emit_is_safe_with_no_registry():
 
 # ── verifiers ────────────────────────────────────────────────────────────────
 
-def test_all_verifiers_registered_and_namespaced(registered):
+def test_all_verifiers_registered_with_descriptions(registered):
+    """Names are passed UNQUALIFIED; the real `PluginRegistry` prefixes them with
+    `<plugin-id>:`. The host's own FakeRegistry does not apply that prefix (its
+    parity contract covers method signatures, not this behaviour), so asserting a
+    namespaced key here would test the fake rather than the plugin."""
     v = load("verifiers")
-    assert set(registered.verifiers) == {f"prototrader-finance:{n}" for n in v.VERIFIERS}
-    for _name, (fn, desc) in registered.verifiers.items():
-        assert desc.strip(), "a verifier with no description is unpickable in the console"
+    assert set(registered.verifiers) == set(v.VERIFIERS)
+    assert all(":" not in n for n in registered.verifiers), "pass bare names; the host namespaces"
+    for name in registered.verifiers:
+        assert registered.verifier_meta[name]["description"].strip(), \
+            f"{name} has no description — unpickable in the console goal creator"
 
 
 def test_verifiers_are_async_two_arg(registered):
-    for name, (fn, _d) in registered.verifiers.items():
+    for name, fn in registered.verifiers.items():
         assert inspect.iscoroutinefunction(fn), f"{name} must be async (spec, ctx)"
         assert len(inspect.signature(fn).parameters) == 2
 
@@ -117,8 +123,7 @@ def test_book_verifiers_grade_a_real_book(offline, isolated_home):
 def test_sample_book_equity_is_never_recorded_as_a_metric(offline, isolated_home):
     """The metric series has no demo flag, so anything written there reads as real
     — including in the Overview sparkline and in max_drawdown's high-water mark."""
-    s = load("seams")
-    assert s.snapshot_equity({}) is None, "the sample book's equity must not be recorded"
+    assert load("metrics").snapshot_equity({}) is None, "the sample book's equity must not be recorded"
 
 
 def test_stale_data_verifier_trips_on_the_snapshot(offline):
@@ -176,8 +181,10 @@ def test_chat_command_degrades_readably(registered, offline):
 
 def test_lifecycle_and_watch_hooks_registered(registered):
     assert registered.lifecycle_hooks and registered.watch_hooks
-    hook = registered.lifecycle_hooks[0]
-    assert hook.get("on_app_loaded") and hook.get("on_system_wake")
+    on_app_loaded, _on_agent_active, on_system_wake = registered.lifecycle_hooks[0]
+    assert on_app_loaded and on_system_wake
+    on_met, _expired, on_stalled, _changed = registered.watch_hooks[0]
+    assert on_met and on_stalled
 
 
 def test_test_connection_route_matches_the_config_section(registered, manifest):
@@ -194,10 +201,9 @@ def test_test_connection_route_matches_the_config_section(registered, manifest):
 def test_seams_never_hard_fail_without_a_host(registered):
     """Every SDK-backed seam is an enhancement. Host-free, they must no-op, not
     raise — this whole suite runs with no protoAgent present and register() ran."""
-    s = load("seams")
-    assert s.equity_history() == []
-    s.record_equity(1.0)          # no host: swallowed
-    assert s.arm_tripwires({}) == 0
+    assert load("metrics").equity_history() == []
+    load("metrics").record_equity(1.0)          # no host: swallowed
+    assert load("watch_hooks").arm_tripwires({}) == 0
 
 
 # ── the parity doc must describe reality ─────────────────────────────────────
@@ -230,11 +236,31 @@ def test_every_claimed_contribution_seam_is_actually_registered(registered):
         "register_lifecycle_hook": registered.lifecycle_hooks,
         "register_a2a_skill": registered.a2a_skills,
         "emit": True,  # exercised by test_emit_is_safe_with_no_registry
-        "on": registered.subscriptions,
+        "on": registered.handlers,
     }
     for seam, got in evidence.items():
         if seam in claimed:
             assert got, f"docs/sdk-parity.md marks {seam} ✅ but register() contributed nothing"
+
+
+def test_consumption_seams_marked_used_have_a_caller(registered):
+    """The ✅ rows under "Consumption" name `graph.sdk` calls. A ✅ whose call site
+    doesn't exist is documentation that reads as capability — v0.3.0 marked
+    `knowledge_add` ✅ for a writer with ZERO callers, and the contribution-only
+    gate below couldn't see it."""
+    import re
+
+    claimed = {s for s, mark in _parity_rows().items() if mark == "✅"}
+    sources = "\n".join(
+        open(load(m).__file__).read()
+        for m in ("metrics", "knowledge", "chat", "a2a", "lifecycle", "watch_hooks",
+                  "conn_test", "verifiers", "book", "store", "marketdata", "dashboard.api")
+    )
+    for seam in ("plugin_store", "record_metric", "metric_history", "knowledge_add", "create_watch"):
+        if seam not in claimed:
+            continue
+        assert re.search(rf"sdk\.{seam}\(", sources), \
+            f"docs/sdk-parity.md marks {seam} ✅ but nothing calls sdk.{seam}()"
 
 
 def test_no_seam_is_used_without_being_documented(registered):
@@ -244,7 +270,7 @@ def test_no_seam_is_used_without_being_documented(registered):
 
     documented = set(_parity_rows())
     src = "\n".join(
-        open(load(m).__file__).read() for m in ("seams", "events", "verifiers")
+        open(load(m).__file__).read() for m in ("metrics", "knowledge", "chat", "a2a", "lifecycle", "watch_hooks", "conn_test", "events", "verifiers")
     ) + open(plugin.__file__).read()
     used = set(re.findall(r"registry\.(register_\w+)", src))
     undocumented = used - documented
