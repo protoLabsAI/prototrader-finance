@@ -17,8 +17,9 @@ intended" (e.g. low-vol is stored as −volatility, so positive IC = low-vol win
 
 from __future__ import annotations
 
-import numpy as np
-import pandas as pd
+import math
+
+from ..numeric import Frame, isna, mean, pearson, spearman, stdev
 
 # A small diversified default universe (large caps across sectors) — enough
 # cross-section for an IC to mean something; override with your own list.
@@ -36,7 +37,7 @@ FACTORS = {
 }
 
 
-def fetch_panel(tickers: list[str], period: str = "3y", *, prefer: str = "live") -> pd.DataFrame:
+def fetch_panel(tickers: list[str], period: str = "3y", *, prefer: str = "live") -> Frame:
     """Adjusted close panel (rows = dates, cols = tickers)."""
     return fetch_panel_meta(tickers, period, prefer=prefer)[0]
 
@@ -64,26 +65,25 @@ def _vol_panel(tickers: list[str], period: str = "3y", *, prefer: str = "live"):
             vols[t] = marketdata.bars(t, period, prefer="cache").frame["Volume"]
         except Exception:
             continue
-    vol = pd.DataFrame(vols).reindex(close.index).ffill() if vols else None
+    vol = Frame.from_columns(vols).reindex_ffill(close.index) if vols else None
     return close, vol
 
 
-def compute_factor(close: pd.DataFrame, factor: str, vol: pd.DataFrame | None = None) -> pd.DataFrame:
+def compute_factor(close: Frame, factor: str, vol: Frame | None = None) -> Frame:
     """Factor value per (date, ticker), sign-standardized so +IC = factor works."""
-    rets = close.pct_change()
     f = (factor or "").lower()
     if f in ("momentum_12_1", "momentum", "mom"):
         return close.shift(21) / close.shift(252) - 1
     if f in ("reversal_1m", "reversal", "rev"):
         return -(close / close.shift(21) - 1)
     if f in ("low_vol", "lowvol", "vol"):
-        return -(rets.rolling(21).std())
+        return -(close.pct_change().rolling_std(21))
     if f in ("trend_200d", "trend"):
-        return close / close.rolling(200).mean() - 1
+        return close / close.rolling_mean(200) - 1
     if f in ("volume_trend", "volume"):
         if vol is None:
             raise ValueError("volume_trend needs the volume panel")
-        return vol.rolling(5).mean() / vol.rolling(60).mean() - 1
+        return vol.rolling_mean(5) / vol.rolling_mean(60) - 1
     raise ValueError(f"unknown factor {factor!r} — try: {', '.join(FACTORS)}")
 
 
@@ -109,23 +109,28 @@ def evaluate(factor: str, universe: list[str] | None = None, period: str = "3y",
     dates = close.index[252::step]              # leave a year of warmup
     ics, rics = [], []
     for d in dates:
-        x = fac.loc[d]
-        y = fwd.loc[d]
-        m = x.notna() & y.notna()
-        if m.sum() < 5:
+        x, y = fac.row_at(d), fwd.row_at(d)
+        # One fixed ticker order for both legs — a correlation between two
+        # differently-ordered cross-sections would be a number about nothing.
+        names = [t for t in close.columns if not isna(x.get(t)) and not isna(y.get(t))]
+        if len(names) < 5:
             continue
-        xv, yv = x[m], y[m]
-        if xv.std() == 0 or yv.std() == 0:
+        xv = [x[t] for t in names]
+        yv = [y[t] for t in names]
+        if stdev(xv) == 0 or stdev(yv) == 0:
             continue
-        ics.append(float(np.corrcoef(xv, yv)[0, 1]))
-        rics.append(float(pd.Series(xv).rank().corr(pd.Series(yv).rank())))
+        ics.append(pearson(xv, yv))
+        rics.append(spearman(xv, yv))
 
     if not ics:
         return {"factor": factor, "error": "not enough cross-sectional data"}
-    ics = np.array(ics); rics = np.array(rics)
-    mean_ic = float(ics.mean())
-    ir = float(mean_ic / ics.std() * np.sqrt(252 / step)) if ics.std() > 0 else 0.0
-    hit = float((ics > 0).mean())
+    mean_ic = mean(ics)
+    # ddof=0 here, deliberately: this was `numpy.ndarray.std()`, the population
+    # deviation, while the Sharpe denominator in the backtest engine is pandas'
+    # sample one. Unifying them would quietly move every published IR.
+    ic_sd = stdev(ics, ddof=0)
+    ir = float(mean_ic / ic_sd * math.sqrt(252 / step)) if ic_sd > 0 else 0.0
+    hit = sum(1 for v in ics if v > 0) / len(ics)
     # Factors are sign-standardized so +IC = "works as intended". So "alive" needs
     # a *positive*, consistent IC; a strong *negative* IC means it reversed.
     verdict = (
@@ -137,7 +142,7 @@ def evaluate(factor: str, universe: list[str] | None = None, period: str = "3y",
     return {
         "factor": factor, "universe_size": len(universe), "period": period,
         "horizon_days": horizon, "rebalances": len(ics),
-        "mean_ic": mean_ic, "mean_rank_ic": float(rics.mean()),
+        "mean_ic": mean_ic, "mean_rank_ic": mean(rics),
         "ir": ir, "hit_rate": hit, "verdict": verdict,
     }
 

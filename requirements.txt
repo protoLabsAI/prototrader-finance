@@ -3,11 +3,12 @@
 #
 #   python -m server plugin install-deps prototrader-finance
 #
-# The host does NOT ship pandas/numpy — an earlier version of this file claimed it
-# did, which is why a normal install could leave the dashboard's data routes dead.
-# Without these the plugin still LOADS and its tools still register; the views and
-# the compute tools report the install command instead of failing silently.
+# Both are OPTIONAL and both only fetch LIVE prices. The plugin loads, registers
+# every tool, and renders every view off the bundled snapshot in `seed/` with
+# neither installed — which is the state a frozen desktop install is in, since it
+# cannot install an in-process dependency at all.
+#
+# pandas/numpy are deliberately absent: they were the one thing that made this
+# plugin uninstallable on the desktop build. See `numeric.py`.
 yfinance>=0.2.40
 ccxt>=4.3
-pandas>=2
-numpy>=1.26

@@ -2,9 +2,12 @@
 # touches a provider (the `offline` fixture makes live calls raise), so CI stays
 # fast and a network flake can never turn the build red.
 #
-# pandas/numpy are here because the host provides them at runtime but a bare CI
-# venv does not. `import graph` must NOT be satisfiable — that's the host-free
-# guarantee this file encodes.
+# pandas/numpy are DEV-ONLY, and only `tests/test_numeric_parity.py` imports them:
+# they are the oracle that `numeric.py` is measured against, so the claim "dropping
+# pandas did not move the numbers" is checked rather than asserted. Nothing the
+# plugin ships may import them — `tests/test_no_runtime_deps.py` enforces that in a
+# subprocess, because this file guarantees they ARE importable during the suite.
+# `import graph` must NOT be satisfiable — that's the host-free guarantee here.
 pandas>=2
 numpy>=1.26
 pytest>=8

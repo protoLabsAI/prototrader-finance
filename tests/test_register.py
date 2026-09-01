@@ -128,11 +128,17 @@ def test_dep_tiers_and_scopes_are_declared_the_way_the_host_parses_them(manifest
     entries — they are not top-level keys. Written as top-level lists (the obvious
     guess) they parse to empty and the declaration silently does nothing.
 
-    Both tiers matter here: yfinance/ccxt are optional because every view still
-    renders off the bundled snapshot without them, and all four are `scope: host`
-    because this plugin imports them IN-PROCESS. The default scope is the managed
-    runtime, whose site-packages is separate — that combination passes the frozen
-    install gate and then dies at every tool call.
+    Both tiers matter here. yfinance/ccxt are `scope: host` because this plugin
+    imports them IN-PROCESS — the default scope is the managed runtime, whose
+    site-packages is separate, so `runtime` would pass the frozen install gate and
+    then die at the first live fetch. And they are `optional` because every view
+    still renders off the bundled snapshot without them, which is what keeps that
+    honest scope from making the plugin uninstallable: the frozen refusal only ever
+    inspects the HARD deps, so an optional host-scoped entry warns and proceeds.
+
+    There are no hard deps left. pandas/numpy were exactly the combination that
+    breaks — hard AND host-scoped — which is why the desktop app refused the plugin
+    outright. `tests/test_no_runtime_deps.py` keeps them out.
     """
     assert "optional_pip" not in manifest and "pip_scopes" not in manifest, \
         "these are derived from requires_pip entries, not top-level keys"
@@ -140,8 +146,7 @@ def test_dep_tiers_and_scopes_are_declared_the_way_the_host_parses_them(manifest
     entries = manifest["requires_pip"]
     assert all(isinstance(e, dict) and e.get("pkg") for e in entries)
     by_pkg = {e["pkg"].split(">")[0].split("=")[0]: e for e in entries}
-    assert by_pkg["yfinance"].get("optional") is True
-    assert by_pkg["ccxt"].get("optional") is True
-    assert by_pkg["pandas"].get("optional") is not True, "pandas is hard — routes need it"
+    assert set(by_pkg) == {"yfinance", "ccxt"}, f"unexpected declared deps: {sorted(by_pkg)}"
     for pkg, e in by_pkg.items():
+        assert e.get("optional") is True, f"{pkg} must be optional or the frozen app refuses the plugin"
         assert e.get("scope") == "host", f"{pkg} is imported in-process, so scope must be host"

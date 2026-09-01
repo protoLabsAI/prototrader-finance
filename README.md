@@ -69,6 +69,39 @@ likely to look like a bug and not be one.
 
 Regenerate the snapshot with `python scripts/refresh_seed.py`.
 
+## It has no dependencies
+
+Nothing this plugin ships imports pandas or numpy. That is not minimalism for its
+own sake — it is what makes the plugin installable on the **frozen desktop app**.
+A dependency a plugin imports in its own process is declared `scope: host`, and a
+frozen host cannot install one: the managed Python runtime that `install-deps`
+targets serves `execute_code` children out of a separate site-packages. So up to
+v0.4.1 the desktop installer refused this plugin outright.
+
+The arithmetic moved into [`numeric.py`](./numeric.py) — a `Series`, a `Frame`, and
+the statistics the engines actually use (rolling windows, EWM, rank correlation,
+percentiles). It is not a small pandas and shouldn't grow into one; it is the dozen
+operations a few hundred rows of daily bars need.
+
+Dropping a numerics library is the kind of change that quietly moves published
+Sharpe ratios, so it is measured rather than asserted:
+
+- **`tests/test_numeric_parity.py`** runs every operation against real pandas on the
+  bundled seed data and fails past 1e-9, including *where the NaNs are*. pandas stays
+  a dev dependency purely to be that oracle.
+- **`tests/test_no_runtime_deps.py`** imports the whole plugin in a subprocess and
+  fails if pandas or numpy appear in `sys.modules` — the one check that would notice
+  a convenient `import pandas` added later, since every developer machine has it.
+- Across 16 backtests and factor studies, the worst difference between the v0.4.1
+  numbers and these is **5.4e-15** relative.
+
+The one number that legitimately changed: the bootstrap confidence interval resamples
+with the standard library's generator instead of numpy's PCG64, so a given seed draws
+a different sample. Same estimator, same returns, still deterministic per seed.
+
+yfinance and ccxt remain optional — they only fetch *live* prices, and everything
+renders from the bundled snapshot without them.
+
 ## Install
 
 Requires a protoAgent host **≥ v0.78.0** (watches + watch hooks, ADR 0067 — the
@@ -78,11 +111,11 @@ highest floor among the seams it uses).
 # 1. Fetch it (clones + pins a SHA in plugins.lock; does NOT run code).
 #    Pin a release rather than `main` — the lock records the SHA either way, but a
 #    tag is what you can reason about later.
-python -m server plugin install https://github.com/protoLabsAI/prototrader-finance --ref v0.4.1
+python -m server plugin install https://github.com/protoLabsAI/prototrader-finance --ref v0.5.0
 
-# 2. Install its deps — declared, never auto-installed.
-#    pandas/numpy are REQUIRED; yfinance/ccxt are optional (without them every view
-#    still renders from the bundled snapshot, you just can't fetch live prices).
+# 2. OPTIONAL — install yfinance/ccxt if you want LIVE prices. There are no
+#    required deps: every view renders from the bundled snapshot without them,
+#    so you can skip this entirely and still see the whole dashboard.
 python -m server plugin install-deps prototrader-finance
 
 # 3. Enable it — this is the trust decision — and restart.
@@ -143,6 +176,7 @@ that no longer exists fails the build.
 | `__init__.py` | `register()` — the single seam the host calls |
 | `book.py` | The paper book: valuation, and the one place that refuses the sample |
 | `marketdata.py` | The live → cache → snapshot read path, and provenance |
+| `numeric.py` | Series/Frame + statistics — why there are no runtime dependencies |
 | `store.py` | Every "which directory?" question, via `sdk.plugin_store()` |
 | `data/ backtest/ factors/ behavioral/ broker/` | Tool groups; each engine is pure and separately tested |
 | `dashboard/` | The console view — `api.py` (gated data), `page.py` (the page) |

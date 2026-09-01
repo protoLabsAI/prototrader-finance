@@ -21,17 +21,18 @@ chart and a wrong claim.
 
 from __future__ import annotations
 
+import csv
 import gzip
 import json
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
-import pandas as pd
-
 from . import store
+from .numeric import NaN, Frame, isna
 
 log = logging.getLogger("protoagent.plugins.prototrader-finance")
 
@@ -79,7 +80,7 @@ class Tier(StrEnum):
 class Bars:
     """An OHLCV frame plus where it came from — provenance is part of the value."""
 
-    frame: pd.DataFrame
+    frame: Frame
     symbol: str
     source: Tier
     fetched_at: float    # epoch seconds the PROVIDER was last called
@@ -142,38 +143,80 @@ def slug(symbol: str) -> str:
 # CSV because it needs no extra dependency (parquet would drag in pyarrow) and
 # stays diffable in review; gzipped because five years of daily bars is 90% air.
 
-def _write_frame(path: Path, df: pd.DataFrame, fetched_at: float) -> None:
+def _fmt_date(d: datetime) -> str:
+    """Midnight writes as a bare date, anything else keeps its time — the format the
+    committed snapshots already use (equity bars carry an 04:00 session stamp, crypto
+    bars do not), so a regenerated file stays diffable against the one it replaces."""
+    if (d.hour, d.minute, d.second, d.microsecond) == (0, 0, 0, 0):
+        return d.strftime("%Y-%m-%d")
+    return d.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _write_frame(path: Path, frame: Frame, fetched_at: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    payload = df[_COLUMNS].copy()
-    payload.index.name = "Date"
-    # Prices to 4dp (sub-cent — lossless for anything this plugin computes) and
-    # volume to int. Full float64 repr triples the on-disk size for digits that
-    # only ever encode floating-point noise.
-    if "Volume" in payload:
-        payload["Volume"] = payload["Volume"].fillna(0).astype("int64")
+    cols = [c for c in _COLUMNS if c in frame]
     with gzip.open(tmp, "wt", newline="") as fh:
         fh.write(f"# fetched_at={fetched_at:.0f}\n")
-        payload.to_csv(fh, float_format="%.4f")
+        w = csv.writer(fh, lineterminator="\n")
+        w.writerow(["Date", *cols])
+        for i, d in enumerate(frame.dates):
+            row = [_fmt_date(d)]
+            for c in cols:
+                v = frame.cols[c][i]
+                # Prices to 4dp (sub-cent — lossless for anything this plugin
+                # computes) and volume to int. A full float repr triples the
+                # on-disk size for digits that only encode floating-point noise.
+                if c == "Volume":
+                    row.append(str(0 if isna(v) else int(v)))
+                else:
+                    row.append("" if isna(v) else f"{v:.4f}")
+            w.writerow(row)
     tmp.replace(path)  # atomic — a half-written cache file is never read
 
 
-def _read_frame(path: Path) -> tuple[pd.DataFrame, float] | None:
+def _parse_date(raw: str) -> datetime | None:
+    """``fromisoformat`` covers both shapes the snapshots use. A row whose date will
+    not parse is dropped rather than defaulted: a bar at the wrong instant is worse
+    than a missing bar, because every window downstream would silently include it."""
+    try:
+        return datetime.fromisoformat(raw.strip().replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _read_frame(path: Path) -> tuple[Frame, float] | None:
     if not path.is_file():
         return None
     try:
-        with gzip.open(path, "rt") as fh:
+        with gzip.open(path, "rt", newline="") as fh:
             first = fh.readline()
             fetched_at = 0.0
             if first.startswith("# fetched_at="):
                 fetched_at = float(first.split("=", 1)[1].strip())
             else:
                 fh.seek(0)
-            df = pd.read_csv(fh, index_col=0, parse_dates=True)
-        if df.empty:
+            reader = csv.reader(fh)
+            header = next(reader, None)
+            if not header:
+                return None
+            cols = [c for c in header[1:] if c in _COLUMNS]
+            picks = [(header.index(c), c) for c in cols]
+            dates: list[datetime] = []
+            data: dict[str, list[float]] = {c: [] for c in cols}
+            for row in reader:
+                if not row or len(row) < len(header):
+                    continue
+                when = _parse_date(row[0])
+                if when is None:
+                    continue
+                dates.append(when)
+                for idx, name in picks:
+                    cell = row[idx].strip()
+                    data[name].append(NaN if not cell else float(cell))
+        if not dates:
             return None
-        df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
-        return df[[c for c in _COLUMNS if c in df.columns]], fetched_at or path.stat().st_mtime
+        return Frame(dates, data), fetched_at or path.stat().st_mtime
     except Exception:
         log.exception("[prototrader-finance] unreadable frame at %s", path)
         return None
@@ -187,9 +230,9 @@ def _seed_path(symbol: str) -> Path:
     return SEED_DIR / f"{slug(symbol)}.1d.csv.gz"
 
 
-def _slice(df: pd.DataFrame, period: str) -> pd.DataFrame:
+def _slice(frame: Frame, period: str) -> Frame:
     n = _PERIOD_DAYS.get(period, _PERIOD_DAYS["2y"])
-    return df.tail(n) if len(df) > n else df
+    return frame.tail(n)
 
 
 # ── the seed snapshot ────────────────────────────────────────────────────────
@@ -213,8 +256,15 @@ def seed_universe() -> list[str]:
 
 # ── the one read path ────────────────────────────────────────────────────────
 
-def _fetch_live(symbol: str, period: str, interval: str, exchange: str) -> pd.DataFrame:
-    """Straight at the provider. Raises on anything short of real bars."""
+def _fetch_live(symbol: str, period: str, interval: str, exchange: str) -> Frame:
+    """Straight at the provider. Raises on anything short of real bars.
+
+    Both providers are converted to a :class:`~numeric.Frame` right here, at the
+    boundary. yfinance hands back a pandas DataFrame and depends on pandas to exist —
+    but only *this* branch does, and it only runs when yfinance is installed, so the
+    plugin still imports and renders its bundled snapshot on a host that has neither.
+    That is the whole reason the seam is at the fetch and not deeper in.
+    """
     if "/" in symbol:
         import ccxt
 
@@ -223,18 +273,20 @@ def _fetch_live(symbol: str, period: str, interval: str, exchange: str) -> pd.Da
         raw = ex.fetch_ohlcv(symbol, timeframe=tf, limit=min(_PERIOD_DAYS.get(period, 504), 1000))
         if not raw:
             raise RuntimeError(f"no data for {symbol!r} @ {exchange}")
-        df = pd.DataFrame(raw, columns=["ts", *_COLUMNS])
-        df.index = pd.to_datetime(df["ts"], unit="ms")
-        return df[_COLUMNS]
+        # ccxt yields plain lists: [ms, open, high, low, close, volume].
+        dates = [datetime.utcfromtimestamp(row[0] / 1000.0) for row in raw]
+        return Frame(dates, {c: [row[i + 1] for row in raw] for i, c in enumerate(_COLUMNS)})
 
     import yfinance as yf
 
     df = yf.Ticker(symbol).history(period=period, interval=interval)
     if df is None or df.empty:
         raise RuntimeError(f"no data for {symbol!r}")
-    df = df[_COLUMNS]
-    df.index = pd.to_datetime(df.index, utc=True).tz_localize(None)
-    return df
+    index = df.index
+    if getattr(index, "tz", None) is not None:
+        index = index.tz_convert("UTC").tz_localize(None)
+    dates = [d.to_pydatetime() for d in index]
+    return Frame(dates, {c: df[c].tolist() for c in _COLUMNS})
 
 
 def bars(
@@ -329,7 +381,7 @@ def panel(
     period: str = "3y",
     *,
     prefer: str = "live",
-) -> tuple[pd.DataFrame, list[dict]]:
+) -> tuple[Frame, list[dict]]:
     """A close-price panel (rows = dates, cols = symbols) + per-symbol provenance.
 
     Fetches per symbol rather than batching so one dead ticker degrades to a
@@ -347,5 +399,5 @@ def panel(
             meta.append({"symbol": s.upper(), "source": "none", "note": str(exc)})
     if not frames:
         raise RuntimeError("no data for any symbol in the universe")
-    close = pd.DataFrame(frames).dropna(how="all").ffill()
+    close = Frame.from_columns(frames).drop_all_nan_rows().ffill()
     return close, meta

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import random
+from datetime import datetime, timedelta
+
+import pytest
+
 from conftest import load
 
-import numpy as np
-import pandas as pd
-import pytest
+# No pandas/numpy here on purpose — see the note in tests/test_marketdata.py.
 
 
 def _engine():
@@ -16,17 +19,18 @@ def _engine():
 def _mean_reverting_panel(n_tickers=12, n_days=900, seed=3):
     """A panel where each name is an Ornstein–Uhlenbeck process around 100 — prices
     revert, so short-term reversal (buy the recent loser) genuinely predicts."""
-    rng = np.random.default_rng(seed)
-    idx = pd.date_range("2022-01-01", periods=n_days, freq="D")
+    numeric = load("numeric")
+    rng = random.Random(seed)
+    day = datetime(2022, 1, 1)
+    dates = [day + timedelta(days=i) for i in range(n_days)]
     cols = {}
     theta = 0.05  # daily pull toward the mean
     for k in range(n_tickers):
-        p = np.empty(n_days)
-        p[0] = 100.0
-        for t in range(1, n_days):
-            p[t] = p[t - 1] + theta * (100.0 - p[t - 1]) + rng.normal(0, 1.5)
-        cols[f"T{k}"] = np.maximum(p, 1.0)
-    return pd.DataFrame(cols, index=idx)
+        p = [100.0]
+        for _ in range(1, n_days):
+            p.append(p[-1] + theta * (100.0 - p[-1]) + rng.gauss(0, 1.5))
+        cols[f"T{k}"] = [max(v, 1.0) for v in p]
+    return numeric.Frame(dates, cols)
 
 
 def test_compute_each_factor_shape():
@@ -34,7 +38,7 @@ def test_compute_each_factor_shape():
     close = _mean_reverting_panel()
     for f in ("momentum_12_1", "reversal_1m", "low_vol", "trend_200d"):
         fac = e.compute_factor(close, f)
-        assert fac.shape == close.shape
+        assert len(fac) == len(close) and fac.columns == close.columns
 
 
 def test_unknown_factor_raises():
