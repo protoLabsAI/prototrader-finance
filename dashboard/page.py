@@ -523,6 +523,12 @@ setTimeout(boot, 800);
 </script></body></html>"""
 
 
-def render(default_symbol: str) -> str:
-    """The page, with the API prefix and configured benchmark baked in."""
-    return PAGE.replace("__API__", API).replace("__DEFAULT_SYMBOL__", default_symbol)
+def render(config: dict | None = None) -> str:
+    """The page, with the API prefix substituted.
+
+    No benchmark is baked in: the symbol field is populated from the gated
+    `/universe` response at boot. v0.3.0 also replaced a `__DEFAULT_SYMBOL__`
+    token that the markup had stopped containing — a no-op that read like a
+    working template hook.
+    """
+    return PAGE.replace("__API__", API)

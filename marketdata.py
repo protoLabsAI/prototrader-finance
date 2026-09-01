@@ -26,6 +26,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import pandas as pd
@@ -56,15 +57,41 @@ CACHE_TTL_S = 6 * 3600
 CACHE_PERIOD = "5y"
 
 
+class Tier(StrEnum):
+    """Which tier answered a price read.
+
+    A `str` enum, so it still serialises to `"live"`/`"cache"`/`"seed"` on the wire
+    and every existing comparison keeps working — but the four places that switch
+    on it can no longer disagree about the spelling, and `Tier.SEED` in a traceback
+    beats a bare string.
+
+    Ordered weakest-last on purpose: `_provenance` reports the WEAKEST tier that
+    contributed to a multi-symbol panel, and that ordering lives here rather than
+    being re-listed at the call site.
+    """
+
+    LIVE = "live"
+    CACHE = "cache"
+    SEED = "seed"
+
+
 @dataclass(frozen=True)
 class Bars:
     """An OHLCV frame plus where it came from — provenance is part of the value."""
 
     frame: pd.DataFrame
     symbol: str
-    source: str          # "live" | "cache" | "seed"
+    source: Tier
     fetched_at: float    # epoch seconds the PROVIDER was last called
     note: str = ""       # why we fell back, when we did
+
+    def __post_init__(self):
+        # Coerce whatever was passed into a real Tier. Callers (and JSON round
+        # trips) hand in plain strings, and `"cache" is Tier.CACHE` is False — so
+        # identity checks in label()/stale() would silently take the wrong branch
+        # and report a fresh cache as a bundled snapshot. Making the type real here
+        # beats loosening every comparison to `==`.
+        object.__setattr__(self, "source", Tier(self.source))
 
     @property
     def age_s(self) -> float:
@@ -72,21 +99,21 @@ class Bars:
 
     @property
     def stale(self) -> bool:
-        return self.source != "live" and self.age_s > CACHE_TTL_S
+        return self.source is not Tier.LIVE and self.age_s > CACHE_TTL_S
 
     def label(self) -> str:
         """One human line for the dashboard's provenance chip."""
         age = _humanize(self.age_s)
-        if self.source == "live":
+        if self.source is Tier.LIVE:
             return "live · just now"
-        if self.source == "cache":
+        if self.source is Tier.CACHE:
             return f"cached · {age} old"
         return f"bundled snapshot · {age} old"
 
     def to_meta(self) -> dict:
         return {
             "symbol": self.symbol,
-            "source": self.source,
+            "source": str(self.source),
             "fetched_at": self.fetched_at,
             "age_s": round(self.age_s),
             "stale": self.stale,
@@ -238,10 +265,10 @@ def bars(
         # exactly the state a first demo is in, so the one case the seed exists for
         # was the one case it wasn't reached.
         if cached is not None:
-            return Bars(_slice(cached[0], period), sym, "cache", cached[1])
+            return Bars(_slice(cached[0], period), sym, Tier.CACHE, cached[1])
         seeded = _read_frame(_seed_path(sym))
         if seeded is not None:
-            return Bars(_slice(seeded[0], period), sym, "seed", seeded[1])
+            return Bars(_slice(seeded[0], period), sym, Tier.SEED, seeded[1])
 
     try:
         # Fetch the superset, cache it whole, hand back the requested slice.
@@ -251,17 +278,17 @@ def bars(
             _write_frame(_cache_path(sym, interval), df, now)
         except Exception:
             log.exception("[prototrader-finance] could not cache %s", sym)
-        return Bars(_slice(df, period), sym, "live", now)
+        return Bars(_slice(df, period), sym, Tier.LIVE, now)
     except Exception as exc:
         note = f"live fetch failed ({type(exc).__name__}: {exc})"
         log.warning("[prototrader-finance] %s for %s — falling back", note, sym)
 
     if cached is not None:
-        return Bars(_slice(cached[0], period), sym, "cache", cached[1], note)
+        return Bars(_slice(cached[0], period), sym, Tier.CACHE, cached[1], note)
 
     seeded = _read_frame(_seed_path(sym))
     if seeded is not None:
-        return Bars(_slice(seeded[0], period), sym, "seed", seeded[1], note)
+        return Bars(_slice(seeded[0], period), sym, Tier.SEED, seeded[1], note)
 
     raise RuntimeError(
         f"no data for {sym!r} — live fetch failed and neither the cache nor the "
@@ -290,7 +317,7 @@ def warm(symbols: list[str], period: str = CACHE_PERIOD) -> int:
         if is_fresh(sym):
             continue
         try:
-            if bars(sym, period, prefer="live").source == "live":
+            if bars(sym, period, prefer="live").source is Tier.LIVE:
                 n += 1
         except Exception:
             continue

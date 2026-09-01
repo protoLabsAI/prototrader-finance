@@ -17,7 +17,6 @@ Two rules hold across every endpoint here:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 
@@ -42,6 +41,19 @@ def _memo(key: str, build, ttl: float = _MEMO_TTL_S):
 
 def _clear_memo() -> None:
     _MEMO.clear()
+
+
+def resolve_config(config) -> dict:
+    """`config` may be a dict (a register-time snapshot) or a callable returning one.
+
+    Handlers call this per request rather than closing over a dict, so a config
+    edit in Settings takes effect without a restart — FastAPI cannot re-mount a
+    router, so the snapshot a builder captured would otherwise be permanent.
+    """
+    try:
+        return (config() if callable(config) else config) or {}
+    except Exception:
+        return {}
 
 
 def _err(exc: Exception) -> dict:
@@ -93,8 +105,12 @@ def build_data_router(config: dict | None):
     from fastapi.responses import JSONResponse
 
     router = APIRouter()
-    cfg = config or {}
-    default_symbol = (cfg.get("default_benchmark") or "SPY").upper()
+
+    def cfg() -> dict:
+        return resolve_config(config)
+
+    def default_symbol() -> str:
+        return (cfg().get("default_benchmark") or "SPY").upper()
 
     def _prefer(refresh: int) -> str:
         return "live" if refresh else "cache"
@@ -103,7 +119,7 @@ def build_data_router(config: dict | None):
 
     @router.get("/strategies")
     async def _strategies():
-        return JSONResponse({"ok": True, "strategies": STRATEGIES, "default_symbol": default_symbol})
+        return JSONResponse({"ok": True, "strategies": STRATEGIES, "default_symbol": default_symbol()})
 
     @router.get("/universe")
     async def _universe():
@@ -117,7 +133,7 @@ def build_data_router(config: dict | None):
             {
                 "ok": True,
                 "symbols": marketdata.seed_universe(),
-                "default_symbol": default_symbol,
+                "default_symbol": default_symbol(),
                 "seed": {
                     "source": m.get("source"),
                     "fetched_at_iso": m.get("fetched_at_iso"),
@@ -145,8 +161,10 @@ def build_data_router(config: dict | None):
             return JSONResponse(_err(e))
 
     def _build_overview(prefer: str) -> dict:
-        marketdata, broker = _deps()
-        book = _load_book(broker, cfg)
+        marketdata, _ = _deps()
+        from .. import book as book_mod
+
+        acct = book_mod.load(cfg())
         marks, rows, sources = {}, [], set()
 
         for sym in marketdata.seed_universe():
@@ -178,39 +196,36 @@ def build_data_router(config: dict | None):
             )
 
         rows.sort(key=lambda r: (r["d1"] is None, -(r["d1"] or 0)))
-        equity = book["cash"] + sum(
-            p["qty"] * marks.get(s, p["avg_price"]) for s, p in book["positions"].items()
-        )
-        invested = sum(p["qty"] * marks.get(s, p["avg_price"]) for s, p in book["positions"].items())
-        cost = sum(p["qty"] * p["avg_price"] for s, p in book["positions"].items())
 
-        from .. import seams
+        from .. import metrics
 
+        invested = acct.invested(marks)
         return {
             "ok": True,
-            "equity_history": seams.equity_history(),
+            "equity_history": metrics.equity_history(),
             "portfolio": {
-                "demo": book["demo"],
-                "equity": _round(equity, 2),
-                "cash": _round(book["cash"], 2),
+                "demo": acct.demo,
+                "equity": _round(acct.equity(marks), 2),
+                "cash": _round(acct.cash, 2),
                 "invested": _round(invested, 2),
-                "unrealized_pnl": _round(invested - cost, 2),
-                "realized_pnl": _round(book["realized_pnl"], 2),
-                "total_return": _round((equity / book["starting_cash"]) - 1) if book["starting_cash"] else None,
-                "positions": _position_rows(book, marks),
-                "note": book.get("note"),
+                "unrealized_pnl": _round(invested - acct.cost_basis(), 2),
+                "realized_pnl": _round(acct.realized_pnl, 2),
+                "total_return": _round(acct.total_return(marks)),
+                "positions": book_mod.position_rows(acct, marks),
+                "note": acct.note,
             },
             "market": rows,
-            "gate": _gate(broker),
+            "gate": _gate(),
             "provenance": _provenance(sources),
         }
 
     # ── backtest ─────────────────────────────────────────────────────────────
 
     @router.get("/backtest")
-    async def _backtest(symbol: str = default_symbol, strategy: str = "ma_cross",
+    async def _backtest(symbol: str = "", strategy: str = "ma_cross",
                         period: str = "2y", refresh: int = 0):
         """Strategy vs buy-and-hold equity curves + headline metrics."""
+        symbol = (symbol or default_symbol()).strip()
         if strategy not in STRATEGIES:
             return JSONResponse({"ok": False, "error": f"unknown strategy {strategy!r}"})
         try:
@@ -226,7 +241,15 @@ def build_data_router(config: dict | None):
             from .. import events
 
             events.emit(events.BACKTEST_COMPLETED, symbol=bars.symbol, strategy=strategy,
-                        period=period, sharpe=m.get("sharpe"), source=bars.source)
+                        period=period, sharpe=m.get("sharpe"), source=str(bars.source))
+            # Record it as a retrievable fact. `sdk-parity.md` marked knowledge_add
+            # ✅ from v0.3.0 while `remember_backtest` had ZERO callers — the exact
+            # "documentation that reads as capability" failure the parity tests are
+            # meant to prevent, missed because they only gated the contribution
+            # table. The consumption table is gated now too.
+            from .. import knowledge
+
+            await knowledge.remember_backtest(bars.symbol, strategy, m, period, str(bars.source))
             return JSONResponse(
                 {
                     "ok": True,
@@ -308,16 +331,11 @@ def build_data_router(config: dict | None):
     async def _ledger(refresh: int = 0):
         """The paper book: gate status, positions, and the fill history."""
         try:
-            marketdata, broker = _deps()
-            book = _load_book(broker, cfg)
-            marks, sources = {}, set()
-            for sym in book["positions"]:
-                try:
-                    b = marketdata.bars(sym, "1mo", prefer=_prefer(refresh))
-                    marks[sym] = float(b.frame["Close"].iloc[-1])
-                    sources.add(b.source)
-                except Exception:
-                    continue
+            _deps()
+            from .. import book as book_mod
+
+            acct = book_mod.load(cfg())
+            marks, sources = book_mod.marks_for(acct, prefer=_prefer(refresh))
             return JSONResponse(
                 {
                     "ok": True,
@@ -326,15 +344,15 @@ def build_data_router(config: dict | None):
                     # its marks sat under whatever chip the Overview last set — a
                     # months-old snapshot displayed beneath "live · just now".
                     "provenance": _provenance(sources),
-                    "demo": book["demo"],
-                    "note": book.get("note"),
-                    "gate": _gate(broker),
-                    "mandate": _mandate_summary(broker, cfg),
-                    "cash": _round(book["cash"], 2),
-                    "starting_cash": _round(book["starting_cash"], 2),
-                    "realized_pnl": _round(book["realized_pnl"], 2),
-                    "positions": _position_rows(book, marks),
-                    "orders": _order_rows(book["orders"])[:100],
+                    "demo": acct.demo,
+                    "note": acct.note,
+                    "gate": _gate(),
+                    "mandate": _mandate_summary(cfg()),
+                    "cash": _round(acct.cash, 2),
+                    "starting_cash": _round(acct.starting_cash, 2),
+                    "realized_pnl": _round(acct.realized_pnl, 2),
+                    "positions": book_mod.position_rows(acct, marks),
+                    "orders": book_mod.order_rows(acct)[:100],
                 }
             )
         except DepsMissing as e:
@@ -363,14 +381,20 @@ def _provenance(sources: set) -> dict:
     symbols are live and one came off the snapshot is not a live strip, and the
     viewer needs to know which claim they can make.
     """
-    for tier, label in (("seed", "bundled snapshot"), ("cache", "cached"), ("live", "live")):
+    from ..marketdata import Tier
+
+    labels = {Tier.SEED: "bundled snapshot", Tier.CACHE: "cached", Tier.LIVE: "live"}
+    # Weakest first — reversed(Tier) is the ordering, declared once on the enum.
+    for tier in (Tier.SEED, Tier.CACHE, Tier.LIVE):
         if tier in sources:
-            return {"source": tier, "label": label, "mixed": len(sources) > 1}
+            return {"source": str(tier), "label": labels[tier], "mixed": len(sources) > 1}
     return {"source": "none", "label": "no data", "mixed": False}
 
 
-def _gate(broker) -> dict:
+def _gate() -> dict:
     """Whether the paper broker would accept an order right now, and why not."""
+    from ..broker import engine as broker
+
     try:
         mandate = broker.Mandate.load()
         ok, why = mandate.gate()
@@ -379,8 +403,9 @@ def _gate(broker) -> dict:
         return {"armed": False, "reason": f"mandate unreadable: {e}"}
 
 
-def _mandate_summary(broker, cfg: dict) -> dict:
+def _mandate_summary(cfg: dict) -> dict:
     from .. import store
+    from ..broker import engine as broker
 
     try:
         m = broker.Mandate.load()
@@ -397,92 +422,3 @@ def _mandate_summary(broker, cfg: dict) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
-
-
-def _load_book(broker, cfg: dict) -> dict:
-    """The real paper book, or the bundled demo book when there isn't one yet.
-
-    A clean install has no fills, which would leave the Ledger tab empty in exactly
-    the demo it exists for. The fallback is flagged ``demo: True`` all the way to
-    the UI, which labels it — a sample book that reads as a real one would be a
-    lie about someone's money.
-    """
-    from .. import marketdata, store
-
-    try:
-        if store.state_path().exists():
-            state = json.loads(store.state_path().read_text())
-            if state.get("orders") or state.get("positions"):
-                return {
-                    "demo": False,
-                    "cash": float(state.get("cash", 0.0)),
-                    "starting_cash": float(getattr(broker.Mandate.load(), "starting_cash", 0.0) or 0.0),
-                    "realized_pnl": float(state.get("realized_pnl", 0.0)),
-                    "positions": state.get("positions") or {},
-                    "orders": state.get("orders") or [],
-                }
-    except Exception:
-        log.exception("[prototrader-finance] could not read the paper book")
-
-    demo_path = marketdata.SEED_DIR / "demo_portfolio.json"
-    if demo_path.is_file():
-        try:
-            d = json.loads(demo_path.read_text())
-            d["demo"] = True
-            return d
-        except Exception:
-            log.exception("[prototrader-finance] unreadable demo portfolio")
-
-    return {"demo": False, "cash": 0.0, "starting_cash": 0.0, "realized_pnl": 0.0,
-            "positions": {}, "orders": []}
-
-
-def _order_rows(orders: list) -> list[dict]:
-    """One shape for the ledger, newest first.
-
-    The live engine records ``fill_price``/``commission``; the bundled demo book
-    records ``price``/``fee``. The view read the latter, so every REAL fill would
-    have rendered its price and fee as dashes — a ledger quietly missing the two
-    numbers that matter most.
-    """
-    out = []
-    for o in reversed(orders or []):
-        price = o.get("price", o.get("fill_price"))
-        qty = o.get("qty")
-        out.append(
-            {
-                "id": o.get("id"),
-                "ts": o.get("ts"),
-                "symbol": o.get("symbol"),
-                "side": o.get("side"),
-                "qty": qty,
-                "price": _round(price, 2),
-                "notional": _round(o.get("notional") or ((qty or 0) * (price or 0)), 2),
-                "fee": _round(o.get("fee", o.get("commission", 0.0)), 2),
-                "realized_pnl": _round(o.get("realized_pnl"), 2),
-                "status": o.get("status", "filled"),
-                "demo": bool(o.get("demo")),
-            }
-        )
-    return out
-
-
-def _position_rows(book: dict, marks: dict) -> list[dict]:
-    rows = []
-    for sym, p in (book.get("positions") or {}).items():
-        qty, avg = float(p.get("qty", 0)), float(p.get("avg_price", 0))
-        mark = marks.get(sym, avg)
-        rows.append(
-            {
-                "symbol": sym,
-                "qty": qty,
-                "avg_price": _round(avg, 2),
-                "mark": _round(mark, 2),
-                "value": _round(qty * mark, 2),
-                "pnl": _round(qty * (mark - avg), 2),
-                "pnl_pct": _round((mark / avg) - 1) if avg else None,
-                "marked": sym in marks,
-            }
-        )
-    rows.sort(key=lambda r: -(r["value"] or 0))
-    return rows

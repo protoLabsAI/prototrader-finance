@@ -29,11 +29,12 @@ def build_dashboard_router(config: dict | None):
 
     from .page import render
 
+    from .api import resolve_config
+
     router = APIRouter()
-    default_symbol = ((config or {}).get("default_benchmark") or "SPY").upper()
 
     @router.get("/dashboard")
     async def _dashboard():  # the path the manifest's views[] declares
-        return HTMLResponse(render(default_symbol))
+        return HTMLResponse(render(resolve_config(config)))
 
     return router

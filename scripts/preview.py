@@ -43,14 +43,14 @@ def build_app(config: dict | None = None):
     import importlib
 
     dash = _load()
-    seams = importlib.import_module(f"{PKG}.seams")
+    conn_test = importlib.import_module(f"{PKG}.conn_test")
     app = FastAPI(title="Quant Desk preview")
     # The same three routers at the same three prefixes register() uses — if the
     # preview mounted a subset, a route could 404 here and be fine in production
     # (or the reverse), which defeats the point of previewing.
     app.include_router(dash.build_dashboard_router(config), prefix="/plugins/prototrader-finance")
     app.include_router(dash.build_data_router(config), prefix=PREFIX)
-    app.include_router(seams.build_test_router(config), prefix="")
+    app.include_router(conn_test.build_test_router(config), prefix="")
 
     ds = Path(os.environ.get("PROTOAGENT_REPO", "~/dev/protoAgent")).expanduser() / "apps/web/public/_ds"
     if ds.is_dir():
