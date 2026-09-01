@@ -2,8 +2,11 @@
 #
 # The broker is OFF until this file exists with `enabled: true`. Even then it is
 # PAPER ONLY (`mode: live` is refused). Every order is checked against these
-# limits AND requires the operator to type APPROVE before it fills. To halt
-# instantly at any time, `touch config/TRADING_HALT` (the kill-switch).
+# limits AND requires the operator to type APPROVE before it fills.
+#
+# To halt instantly at any time, create a file named TRADING_HALT. It is honoured
+# in BOTH the plugin's own store (the path the Ledger tab shows) AND the host's
+# config dir — a halt file in the "wrong" one of those must still stop trading.
 
 enabled: false          # master switch — nothing trades until this is true
 mode: paper             # paper | live  (live is intentionally not implemented)

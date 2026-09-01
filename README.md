@@ -44,8 +44,10 @@ python scripts/preview.py     # http://127.0.0.1:7899/plugins/prototrader-financ
 | **A2A card skills** | `quant-backtest` (typed output schema) · `market-read` |
 | **Config/secrets/settings** | default benchmark · optional market-data key · broker-mandate path (ADR 0019) |
 
-Every seam it uses — and every one it deliberately doesn't, with the reason — is
-in **[docs/sdk-parity.md](./docs/sdk-parity.md)**.
+**Docs:** [reference.md](./docs/reference.md) (tools, event payloads, verifier
+args, settings, routes) · [operating.md](./docs/operating.md) (arming the broker,
+data freshness, troubleshooting) · [sdk-parity.md](./docs/sdk-parity.md) (every
+SDK seam used, and every one deliberately skipped, with the reason).
 
 ## It works offline
 
@@ -58,6 +60,13 @@ The tier is never hidden: the dashboard shows a provenance chip (`live`,
 symbols reports the *weakest* tier that contributed. Serving a months-old
 snapshot as if it were this morning's tape would be worse than an error box.
 
+**A paint never touches the network** — that's the point, and it means a panel can
+say "bundled snapshot" on a machine with perfectly good internet. Live data comes
+from the **Refresh** button, a `?refresh=1` request, or the lifecycle warm that runs
+at app load and after the machine wakes. See
+[docs/operating.md](./docs/operating.md#data-freshness) — this is the thing most
+likely to look like a bug and not be one.
+
 Regenerate the snapshot with `python scripts/refresh_seed.py`.
 
 ## Install
@@ -66,13 +75,17 @@ Requires a protoAgent host **≥ v0.78.0** (watches + watch hooks, ADR 0067 — 
 highest floor among the seams it uses).
 
 ```bash
-# 1. Fetch the plugin (clones + pins a SHA in plugins.lock; does NOT run code).
-python -m server plugin install https://github.com/protoLabsAI/prototrader-finance --ref main
+# 1. Fetch it (clones + pins a SHA in plugins.lock; does NOT run code).
+#    Pin a release rather than `main` — the lock records the SHA either way, but a
+#    tag is what you can reason about later.
+python -m server plugin install https://github.com/protoLabsAI/prototrader-finance --ref v0.4.1
 
-# 2. Install its declared deps (explicit — install never auto-pip-installs).
+# 2. Install its deps — declared, never auto-installed.
+#    pandas/numpy are REQUIRED; yfinance/ccxt are optional (without them every view
+#    still renders from the bundled snapshot, you just can't fetch live prices).
 python -m server plugin install-deps prototrader-finance
 
-# 3. Enable it (this is the trust decision) and restart.
+# 3. Enable it — this is the trust decision — and restart.
 #    Add `prototrader-finance` to plugins.enabled, or:
 python -m server plugin enable prototrader-finance
 ```
@@ -95,6 +108,8 @@ code, use an MCP server instead — sandboxed, out-of-process.)
   approval → simulated fill → audit log.
 - **Paper only.** No live trading path exists.
 
+Step-by-step: [docs/operating.md](./docs/operating.md#arming-the-paper-broker).
+
 ## Development
 
 ```bash
@@ -104,11 +119,44 @@ pytest -q          # 100+ tests: no network, no protoAgent host
 ruff check .
 ```
 
-The suite is **host-free** — `requirements-dev.txt` deliberately excludes
-`yfinance`/`ccxt`, and CI asserts that `import graph` fails, so the claim can't
-silently rot. It loads the plugin as the same synthetic package the host builds
-(`tests/conftest.py`), so relative imports and `register()` are exercised the way
-production runs them rather than through a test-only module graph.
+The suite is **host-free**: `requirements-dev.txt` carries no provider SDKs, and CI
+asserts that `import graph` fails, so the claim can't silently rot.
+
+It uses protoAgent's own harness — `tests/_plugin_testkit.py` is
+`graph/plugins/testkit.py` vendored verbatim, exactly as the scaffolder does — so
+the plugin loads as the same synthetic package the host builds and `register()` is
+driven through a `FakeRegistry` that is parity-tested against the real one. Refresh
+it with:
+
+```bash
+cp ~/dev/protoAgent/graph/plugins/testkit.py tests/_plugin_testkit.py
+```
+
+`tests/test_docs.py` checks this README and `docs/reference.md` against what
+`register()` actually contributes, so a documented tool, verifier, event or skill
+that no longer exists fails the build.
+
+## Repo map
+
+| Path | What |
+|---|---|
+| `__init__.py` | `register()` — the single seam the host calls |
+| `book.py` | The paper book: valuation, and the one place that refuses the sample |
+| `marketdata.py` | The live → cache → snapshot read path, and provenance |
+| `store.py` | Every "which directory?" question, via `sdk.plugin_store()` |
+| `data/ backtest/ factors/ behavioral/ broker/` | Tool groups; each engine is pure and separately tested |
+| `dashboard/` | The console view — `api.py` (gated data), `page.py` (the page) |
+| `metrics/knowledge/chat/a2a/lifecycle/watch_hooks/conn_test.py` | One SDK seam each |
+| `verifiers.py` `events.py` | Goal/watch verifiers; the event contract |
+| `seed/` | The bundled snapshot + sample book |
+| `scripts/` | `preview.py` (view with no host) · `refresh_seed.py` |
+
+## Releases
+
+Tagged releases with notes:
+[github.com/protoLabsAI/prototrader-finance/releases](https://github.com/protoLabsAI/prototrader-finance/releases).
+Install a tag, not `main` — `plugins.lock` records the SHA either way, but a tag is
+what you can reason about later.
 
 ## License
 

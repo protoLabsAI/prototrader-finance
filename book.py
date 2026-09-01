@@ -1,8 +1,9 @@
 """The paper book — one owner for "what does this account hold, and what is it worth?"
 
 Before this module the answer lived in four places: `dashboard/api.py` (the view),
-`seams.py` (the metric snapshot), `verifiers.py` (goal grading) and
-`PaperBroker.equity` (the engine). Three of them recomputed
+the old `seams.py` (the metric snapshot — since split into `metrics.py` and
+friends), `verifiers.py` (goal grading) and `PaperBroker.equity` (the engine).
+Three of them recomputed
 ``cash + sum(qty * mark)`` independently, and two reached into the *view* for a
 private `_load_book` — a broker concept owned by an iframe's data layer.
 
