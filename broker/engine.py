@@ -196,7 +196,7 @@ def quote_meta(symbol: str) -> tuple[float, str]:
     from .. import marketdata
 
     b = marketdata.bars(symbol, "1mo", prefer="cache")
-    return float(b.frame["Close"].iloc[-1]), b.label()
+    return float(b.frame["Close"].last()), b.label()
 
 
 class PaperBroker:

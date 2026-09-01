@@ -32,8 +32,8 @@ def build_test_router(config: dict | None):
             from . import marketdata
         except ImportError as e:
             return JSONResponse({"ok": False, "detail": (
-                f"the market-data stack isn't installed ({e.name or e}). Run "
-                "`python -m server plugin install-deps prototrader-finance`, then restart.")})
+                f"the market-data module failed to import ({e.name or e}) — a bug rather "
+                "than a missing install; the data path needs only the standard library.")})
 
         from .dashboard.api import resolve_config
 
@@ -46,7 +46,7 @@ def build_test_router(config: dict | None):
         if live.source == "live":
             return JSONResponse({"ok": True, "detail": (
                 f"Live provider reachable — {symbol} at "
-                f"{live.frame['Close'].iloc[-1]:,.2f}. Bundled snapshot covers {n} symbols.")})
+                f"{live.frame['Close'].last():,.2f}. Bundled snapshot covers {n} symbols.")})
         return JSONResponse({"ok": True, "detail": (
             f"Live provider unreachable; serving {live.label()}. Every view still "
             f"renders from the {n}-symbol bundled snapshot — install yfinance/ccxt "

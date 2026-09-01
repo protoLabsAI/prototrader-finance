@@ -1,6 +1,6 @@
 id: prototrader-finance
 name: protoTrader Finance
-version: 0.4.1
+version: 0.5.0
 description: >-
   The full-bundle finance plugin — every protoAgent contribution type in one
   installable repo. 13 market/quant **tools** (market data, vectorized backtest,
@@ -29,11 +29,13 @@ enabled: false
 #                     default (`runtime`) would pass the frozen install gate and then
 #                     die with ModuleNotFoundError at every tool call.
 #
-# pandas/numpy are HARD: without them the data routes answer with an install
-# command instead of data.
+# There are NO hard deps. pandas/numpy used to be here, declared `scope: host`
+# because the engines imported them in-process — and that combination is refused
+# outright by the frozen desktop app, which has no way to install into its own
+# site-packages. The numerics moved to `numeric.py` (stdlib, pandas-parity-tested)
+# so the plugin installs and renders everywhere. `tests/test_no_runtime_deps.py`
+# fails the build if either comes back.
 requires_pip:
-  - { pkg: "pandas>=2", scope: host }
-  - { pkg: "numpy>=1.26", scope: host }
   - { pkg: "yfinance>=0.2.40", optional: true, scope: host }
   - { pkg: "ccxt>=4.3", optional: true, scope: host }
 

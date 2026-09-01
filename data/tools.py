@@ -13,9 +13,13 @@ import asyncio
 
 from langchain_core.tools import tool
 
+# These tools go straight at a provider, so they are the one surface that genuinely
+# needs yfinance/ccxt. Everything else — the views, the backtest, the factor study —
+# reads the bundled snapshot and works with neither installed.
 _INSTALL_HINT = (
-    "the finance data libraries aren't installed — run "
-    "`pip install -r requirements-finance.txt` (yfinance + ccxt)."
+    "live market data needs yfinance/ccxt, which aren't installed — run "
+    "`python -m server plugin install-deps prototrader-finance`, then restart. "
+    "The dashboard and the /quant command work without them, off the bundled snapshot."
 )
 
 

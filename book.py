@@ -146,7 +146,7 @@ def marks_for(book: Book, *, prefer: str = "cache") -> tuple[dict, set]:
     for sym in book.positions:
         try:
             b = marketdata.bars(sym, "1mo", prefer=prefer)
-            marks[sym] = float(b.frame["Close"].iloc[-1])
+            marks[sym] = float(b.frame["Close"].last())
             sources.add(b.source)
         except Exception:
             continue

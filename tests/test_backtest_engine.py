@@ -2,33 +2,51 @@
 
 from __future__ import annotations
 
+import random
+from datetime import datetime, timedelta
+
+import pytest
+
 from conftest import load
 
-import numpy as np
-import pandas as pd
-import pytest
+# No pandas/numpy here on purpose — see the note in tests/test_marketdata.py.
 
 
 def _engine():
     return load("backtest.engine")
 
 
+def _days(n, start=datetime(2024, 1, 1)):
+    return [start + timedelta(days=i) for i in range(n)]
+
+
 def _synth(n=400, seed=1):
-    rng = np.random.default_rng(seed)
-    idx = pd.date_range("2024-01-01", periods=n, freq="D")
-    px = 100 * np.cumprod(1 + rng.normal(0.0005, 0.01, n))
-    return pd.DataFrame({"Open": px, "High": px * 1.01, "Low": px * 0.99,
-                         "Close": px, "Volume": 1e6}, index=idx)
+    rng = random.Random(seed)
+    px, level = [], 100.0
+    for _ in range(n):
+        level *= 1 + rng.gauss(0.0005, 0.01)
+        px.append(level)
+    return load("numeric").Frame(
+        _days(n),
+        {"Open": px, "High": [p * 1.01 for p in px], "Low": [p * 0.99 for p in px],
+         "Close": px, "Volume": [1e6] * n},
+    )
+
+
+def _sim_frame(cols):
+    """A hand-built sim frame for the degenerate-window guards below."""
+    n = len(next(iter(cols.values())))
+    return load("numeric").Frame(_days(n), cols)
 
 
 def test_buy_hold_matches_price_change():
     e = _engine()
     df = _synth()
     sim = e.simulate(df, e.signals(df, "buy_hold", {}), cost_bps=0, slippage_bps=0)
-    px_change = df["Close"].iloc[-1] / df["Close"].iloc[0] - 1
+    px_change = df["Close"].last() / df["Close"][0] - 1
     # buy_hold strategy return ≈ price change (one entry, zero friction).
-    assert abs(sim["equity"].iloc[-1] - 1 - px_change) < 1e-6
-    assert abs(sim["bh_equity"].iloc[-1] - sim["equity"].iloc[-1]) < 1e-6
+    assert abs(sim["equity"].last() - 1 - px_change) < 1e-6
+    assert abs(sim["bh_equity"].last() - sim["equity"].last()) < 1e-6
 
 
 def test_no_lookahead():
@@ -37,7 +55,7 @@ def test_no_lookahead():
     pos = e.signals(df, "ma_cross", {"fast": 5, "slow": 20})
     sim = e.simulate(df, pos, cost_bps=0, slippage_bps=0)
     # The position acting on bar t must be the signal from t-1 (shifted), never t.
-    assert (sim["held"] == pos.shift(1).fillna(0.0)).all()
+    assert sim["held"].tolist() == pos.shift(1).fillna(0.0).tolist()
 
 
 def test_metrics_shape_and_drawdown():
@@ -70,8 +88,8 @@ def test_single_bar_metrics_are_finite():
     """A one-bar window must not leak NaN vol (std is undefined for n=1) — M1."""
     import json
     e = _engine()
-    sim = pd.DataFrame({"ret": [0.01], "held": [1.0], "turn": [1.0], "strat": [0.01]})
-    m = e.metrics(sim, pd.date_range("2024-01-01", periods=1, freq="D"))
+    sim = _sim_frame({"ret": [0.01], "held": [1.0], "turn": [1.0], "strat": [0.01]})
+    m = e.metrics(sim, _days(1))
     assert m["vol"] == 0.0
     json.dumps(m, allow_nan=False)  # no NaN/inf anywhere
 
@@ -80,9 +98,9 @@ def test_negative_equity_metrics_are_json_safe():
     """Equity driven <= 0 must not yield NaN CAGR or a sub -100% drawdown — H2/L3."""
     import json
     e = _engine()
-    sim = pd.DataFrame({"ret": [0.0, -2.0], "held": [1.0, 1.0],
-                        "turn": [1.0, 0.0], "strat": [0.0, -2.0]})
-    m = e.metrics(sim, pd.date_range("2024-01-01", periods=2, freq="D"))
+    sim = _sim_frame({"ret": [0.0, -2.0], "held": [1.0, 1.0],
+                      "turn": [1.0, 0.0], "strat": [0.0, -2.0]})
+    m = e.metrics(sim, _days(2))
     assert m["cagr"] == 0.0          # guarded, not NaN (negative-base fractional power)
     assert m["max_dd"] >= -1.0       # floored at total ruin
     json.dumps(m, allow_nan=False)
@@ -95,6 +113,6 @@ def test_oos_slice_preserves_boundary_return():
     df = _synth(n=100)
     sim = e.simulate(df, e.signals(df, "buy_hold", {}), cost_bps=0, slippage_bps=0)
     cut = 70
-    oos = e.metrics(sim.iloc[cut:], df.index[cut:])
-    expected = df["Close"].iloc[-1] / df["Close"].iloc[cut - 1] - 1
+    oos = e.metrics(sim.slice_rows(cut, None), df.index[cut:])
+    expected = df["Close"].last() / df["Close"][cut - 1] - 1
     assert abs(oos["total_return"] - expected) < 1e-9  # boundary bar not zeroed

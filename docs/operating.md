@@ -83,16 +83,19 @@ the same state — both read every location the gate reads.
 
 ## Troubleshooting
 
-**Every panel says "Market-data stack not installed".**
-`requires_pip` is declared, not auto-installed. Run:
-`python -m server plugin install-deps prototrader-finance`, then restart.
-pandas and numpy are required; yfinance and ccxt are optional — without them
-everything still renders from the bundled snapshot, you just can't fetch live.
+**Every panel is empty, or the install was refused.**
+Up to v0.4.1 this plugin declared pandas and numpy as hard, in-process (`scope: host`)
+dependencies. The frozen desktop app cannot satisfy those — it has no way to install
+into its own site-packages — so the installer refused the plugin outright with
+*"needs pandas, numpy as a HOST-scoped dep, which a frozen app cannot satisfy"*, and a
+source install that skipped `install-deps` had a dashboard whose every panel failed.
+
+Neither happens from v0.5.0: the numerics moved into the plugin (`numeric.py`) and
+there are **no required dependencies**. Upgrade rather than trying to install pandas.
 
 **The rail icon is there but every panel fails to fetch.**
-Same cause as above in almost every case. If the deps are installed, check the
-server log at plugin load: each contribution group reports separately, so a failed
-router is named.
+No longer a dependency problem. Check the server log at plugin load: each contribution
+group reports separately, so a failed router is named.
 
 **The dashboard shows a sample book I didn't create.**
 With no fills yet, the Ledger falls back to a bundled sample so the tab isn't empty

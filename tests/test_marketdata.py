@@ -8,16 +8,22 @@ a snapshot served silently as if it were live is the failure that would be worse
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 
-import pandas as pd
 import pytest
 
 from conftest import load
 
+# No pandas anywhere in this file, deliberately: the plugin's whole runtime claim
+# is that it works on a host that has none, and a fixture built with pandas would
+# quietly test that claim on a machine where the claim cannot fail.
+
 
 def _frame(n=30, start=100.0):
-    idx = pd.date_range("2026-01-01", periods=n, freq="D")
-    return pd.DataFrame(
+    numeric = load("numeric")
+    day = datetime(2026, 1, 1)
+    return numeric.Frame(
+        [day + timedelta(days=i) for i in range(n)],
         {
             "Open": [start + i for i in range(n)],
             "High": [start + i + 1 for i in range(n)],
@@ -25,7 +31,6 @@ def _frame(n=30, start=100.0):
             "Close": [start + i + 0.5 for i in range(n)],
             "Volume": [1_000_000 + i for i in range(n)],
         },
-        index=idx,
     )
 
 
@@ -41,7 +46,8 @@ def test_frame_roundtrip_preserves_values_and_timestamp(isolated_home):
     assert fetched_at == 1_700_000_000.0
     assert list(back.columns) == ["Open", "High", "Low", "Close", "Volume"]
     assert len(back) == len(df)
-    assert back["Close"].iloc[-1] == pytest.approx(df["Close"].iloc[-1], abs=1e-4)
+    assert back["Close"].last() == pytest.approx(df["Close"].last(), abs=1e-4)
+    assert back.index == df.index, "the date index must survive the CSV round trip intact"
 
 
 def test_write_is_atomic(isolated_home):
@@ -89,7 +95,7 @@ def test_seed_serves_a_real_symbol_with_no_network(offline):
     b = md.bars("SPY", "1y")
     assert b.source == "seed"
     assert len(b.frame) > 200
-    assert b.frame["Close"].iloc[-1] > 0
+    assert b.frame["Close"].last() > 0
 
 
 # ── the fallback chain ───────────────────────────────────────────────────────

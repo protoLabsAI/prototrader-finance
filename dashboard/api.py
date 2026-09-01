@@ -72,19 +72,26 @@ def _round(x, n=4):
 
 
 class DepsMissing(RuntimeError):
-    """The optional market-data stack isn't installed."""
+    """A module the data routes need would not import."""
 
 
 def _deps():
-    """Import the pandas-backed modules, or raise a message an operator can act on.
+    """Import the market-data modules, or raise a message an operator can act on.
 
-    Deliberately NOT imported at router-BUILD time. `requires_pip` is declared, not
-    auto-installed (ADR 0027 D4), so a perfectly normal install has no pandas — and
-    an ImportError while building the router killed the whole router group. The rail
-    icon still appeared, the page still loaded, and every panel failed to fetch: a
-    broken feature with nothing useful anywhere to say why.
+    Deliberately NOT imported at router-BUILD time, and that stays true even though
+    the reason has changed. It used to be that `requires_pip` is declared rather than
+    auto-installed (ADR 0027 D4), so a perfectly normal install had no pandas — and an
+    ImportError while building the router aborted the whole router group. The rail icon
+    still appeared, the page still loaded, and every panel failed to fetch: a broken
+    feature with nothing useful anywhere to say why.
 
-    Now the router always mounts and each endpoint answers with the fix.
+    That specific failure is gone, because nothing here has a hard dependency any more.
+    The lazy import stays because the property worth keeping was never "pandas might be
+    missing" — it was that ONE bad import must cost one panel, not the whole view.
+
+    So this raising now means a genuinely broken module, not a missing install. Live
+    prices still want yfinance/ccxt, but those are optional and fail per-fetch, falling
+    back to the cache and then the bundled snapshot — never here.
     """
     try:
         from .. import marketdata
@@ -93,9 +100,9 @@ def _deps():
         return marketdata, broker
     except ImportError as e:
         raise DepsMissing(
-            f"the market-data stack isn't installed ({e.name or e}). Run: "
-            "`python -m server plugin install-deps prototrader-finance` "
-            "(installs pandas/numpy/yfinance/ccxt), then restart."
+            f"the market-data module failed to import ({e.name or e}) — this is a bug, "
+            "not a missing dependency: the data routes need nothing beyond the standard "
+            "library. Please report it with the server log."
         ) from e
 
 
@@ -176,11 +183,11 @@ def build_data_router(config: dict | None):
             except Exception:
                 continue
             close = b.frame["Close"]
-            last = float(close.iloc[-1])
+            last = float(close.last())
             marks[sym] = last
             sources.add(b.source)
             # Spark the last year only — two years of shape in 88px is mush.
-            close_spark = close.iloc[-252:]
+            close_spark = close.tail(252)
             step = max(1, len(close_spark) // 90)
             rows.append(
                 {
@@ -190,7 +197,7 @@ def build_data_router(config: dict | None):
                     "m1": _pct_change(close, 21),
                     "m6": _pct_change(close, 126),
                     "y1": _pct_change(close, 252),
-                    "spark": [_round(v, 4) for v in close_spark.iloc[::step].tolist()][-90:],
+                    "spark": [_round(v, 4) for v in close_spark[::step].tolist()][-90:],
                     "source": b.source,
                 }
             )
@@ -370,8 +377,8 @@ def build_data_router(config: dict | None):
 def _pct_change(close, n: int):
     if len(close) <= n:
         return None
-    prev = float(close.iloc[-n - 1])
-    return _round((float(close.iloc[-1]) / prev) - 1) if prev else None
+    prev = float(close[-n - 1])
+    return _round((float(close.last()) / prev) - 1) if prev else None
 
 
 def _provenance(sources: set) -> dict:
